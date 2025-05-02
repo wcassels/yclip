@@ -119,6 +119,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 // We're holding a read lock while we write the bytes into
                 // the buffer. Probably not a big deal?
                 writer.write_all(new_clip.as_bytes_with_nul()).await?;
+                debug!("Sent {new_clip:?} to {remote_addr}");
                 drop(lock);
                 writer.flush().await?;
             },
