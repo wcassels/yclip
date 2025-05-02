@@ -138,7 +138,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 }
 
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
-                debug!("Received new clipboard: {new_clip:?}");
+                debug!("Received {new_clip:?} from {remote_addr}");
 
                 let decoded = new_clip.decode();
                 clip_ctx.set_text(decoded).unwrap();
