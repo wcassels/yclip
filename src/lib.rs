@@ -93,10 +93,7 @@ async fn watch_local(notify: Arc<Notify>) -> anyhow::Result<()> {
         let new_clip = ctx.get_contents().unwrap();
         if new_clip != current_clip {
             let encoded = EncodedClipboard::encode(&new_clip);
-            debug!(
-                "Local clipboard change: {encoded:?} ({:?})",
-                encoded.as_bytes_with_nul()
-            );
+            debug!("Local clipboard change: {encoded:?}");
             *CLIPBOARD.write().await = Some(encoded);
             notify.notify_waiters();
             current_clip = new_clip;
@@ -105,6 +102,8 @@ async fn watch_local(notify: Arc<Notify>) -> anyhow::Result<()> {
 }
 
 async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Result<()> {
+    info!("New peer {} connected", stream.peer_addr()?);
+
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
     let mut reader = tokio::io::BufReader::new(read);
@@ -128,6 +127,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 let mut incoming_bytes = Vec::new();
                 reader.read_until(0, &mut incoming_bytes).await?;
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
+                debug!("Received new clipboard: {new_clip:?}");
 
                 let decoded = new_clip.decode();
                 clip_ctx.set_contents(decoded).unwrap();
