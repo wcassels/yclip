@@ -59,10 +59,6 @@ pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<(
 
     info!("Listening for connections on port {port}");
 
-    // What do we need to do?
-    // 1. Monitor local clipboard & broadcast to all non-self hosts
-    // 2. Listen for incoming clipboard updates & broadcast to all other hosts
-
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
 
@@ -95,9 +91,23 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
 
     LazyLock::force(&CLIPBOARD);
 
+    let mut get_text = || -> anyhow::Result<Option<String>> {
+        use arboard::Error;
+        match ctx.get_text() {
+            Ok(s) => Ok(Some(s)),
+            // Including ClipboardOccupied here feels a bit hacky, but semantically
+            // it's gonna mean we retry so :shrug:
+            Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    };
+
     loop {
         tokio::time::sleep(refresh_rate).await;
-        let new_clip = ctx.get_text().unwrap();
+        let Some(new_clip) = get_text()? else {
+            continue;
+        };
+
         let encoded = EncodedClipboard::encode(&new_clip);
         if *CLIPBOARD.read().await != encoded {
             debug!("Local clipboard change: {encoded:?}");
