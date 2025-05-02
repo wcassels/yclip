@@ -1,13 +1,6 @@
 use clap::Parser;
-use std::net::SocketAddrV4;
+use std::{net::SocketAddrV4, time::Duration};
 use tracing_subscriber::prelude::*;
-
-#[derive(clap::Parser)]
-struct Options {
-    #[arg(short, long, conflicts_with = "host", default_value_t = 9986)]
-    port: u16,
-    host: Option<SocketAddrV4>,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,9 +8,9 @@ async fn main() -> anyhow::Result<()> {
     let opts = Options::parse();
 
     if let Some(addr) = opts.host {
-        yclip::run_satellite(addr).await?;
+        yclip::run_satellite(addr, opts.refresh_interval).await?;
     } else {
-        yclip::run_host(opts.port).await?;
+        yclip::run_host(opts.port, opts.refresh_interval).await?;
     }
 
     Ok(())
@@ -35,4 +28,20 @@ fn init_logging() {
     let layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let subscriber = subscriber.with(layer);
     subscriber.init();
+}
+
+#[derive(clap::Parser)]
+#[command(version)]
+struct Options {
+    /// Listen for incoming connections on this port
+    #[arg(short, long, conflicts_with = "host", default_value_t = 9986)]
+    port: u16,
+    /// Local clipboard check interval (ms)
+    #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
+    refresh_interval: Duration,
+    host: Option<SocketAddrV4>,
+}
+
+fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {
+    Ok(Duration::from_millis(s.parse()?))
 }

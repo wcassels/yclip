@@ -38,17 +38,17 @@ impl EncodedClipboard {
 
 static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
 
-pub async fn run_satellite(addr: SocketAddrV4) -> anyhow::Result<()> {
+pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow::Result<()> {
     let stream = TcpStream::connect(&addr).await?;
     info!("Connected to clipboard on {addr}");
     let notify = Arc::new(Notify::const_new());
-    spawn_local_watcher(Arc::clone(&notify));
+    spawn_local_watcher(Arc::clone(&notify), refresh_rate);
     watch_remote(stream, notify).await?; // Blocks
 
     Ok(())
 }
 
-pub async fn run_host(port: u16) -> anyhow::Result<()> {
+pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<()> {
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::new([0, 0, 0, 0].into(), port)).await?;
 
@@ -59,7 +59,7 @@ pub async fn run_host(port: u16) -> anyhow::Result<()> {
     // 2. Listen for incoming clipboard updates & broadcast to all other hosts
 
     let notify = Arc::new(Notify::const_new());
-    spawn_local_watcher(Arc::clone(&notify));
+    spawn_local_watcher(Arc::clone(&notify), refresh_interval);
 
     loop {
         let (stream, _addr) = listener.accept().await?;
@@ -76,19 +76,19 @@ fn spawn_remote_watcher(stream: TcpStream, notify: Arc<Notify>) {
     });
 }
 
-fn spawn_local_watcher(notify: Arc<Notify>) {
-    tokio::task::spawn(async {
-        if let Err(e) = watch_local(notify).await {
+fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
+    tokio::task::spawn(async move {
+        if let Err(e) = watch_local(notify, refresh_rate).await {
             error!("Local watcher exited: {e}");
         }
     });
 }
 
-async fn watch_local(notify: Arc<Notify>) -> anyhow::Result<()> {
+async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
     let mut ctx = ClipboardContext::new().unwrap();
 
     loop {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(refresh_rate).await;
         let new_clip = ctx.get_contents().unwrap();
         let encoded = EncodedClipboard::encode(&new_clip);
         if CLIPBOARD.read().await.as_ref() != Some(&encoded) {
