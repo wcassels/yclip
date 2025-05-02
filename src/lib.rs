@@ -110,32 +110,32 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
     let mut reader = tokio::io::BufReader::new(read);
     let mut clip_ctx = ClipboardContext::new().unwrap();
 
-    tokio::select! {
-        _notified = notify.notified() => {
-            // Someone has updated the clipboard. Send it to everyone else.
-            let lock = CLIPBOARD.read().await;
-            let new_clip = lock
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Invariant breached: notified before clipboard was initialised?"))?;
-            // We're holding a read lock while we write the bytes into
-            // the buffer. Probably not a big deal?
-            writer.write_all(new_clip.as_bytes_with_nul()).await?;
-            drop(lock);
-            writer.flush().await?;
-        },
-        _readable = reader.get_ref().readable() => {
-            let mut incoming_bytes = Vec::new();
-            reader.read_until(0, &mut incoming_bytes).await?;
-            let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
+    loop {
+        tokio::select! {
+            _notified = notify.notified() => {
+                // Someone has updated the clipboard. Send it to everyone else.
+                let lock = CLIPBOARD.read().await;
+                let new_clip = lock
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Invariant breached: notified before clipboard was initialised?"))?;
+                // We're holding a read lock while we write the bytes into
+                // the buffer. Probably not a big deal?
+                writer.write_all(new_clip.as_bytes_with_nul()).await?;
+                drop(lock);
+                writer.flush().await?;
+            },
+            _readable = reader.get_ref().readable() => {
+                let mut incoming_bytes = Vec::new();
+                reader.read_until(0, &mut incoming_bytes).await?;
+                let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
 
-            let decoded = new_clip.decode();
-            clip_ctx.set_contents(decoded).unwrap();
-            *CLIPBOARD.write().await = Some(new_clip);
+                let decoded = new_clip.decode();
+                clip_ctx.set_contents(decoded).unwrap();
+                *CLIPBOARD.write().await = Some(new_clip);
 
-            // We're not a waiter, so we won't get woken up by our own update later
-            notify.notify_waiters();
+                // We're not a waiter, so we won't get woken up by our own update later
+                notify.notify_waiters();
+            }
         }
     }
-
-    Ok(())
 }
