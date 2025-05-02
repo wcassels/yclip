@@ -2,7 +2,7 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use std::{
     ffi::CString,
     net::{SocketAddr, SocketAddrV4},
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tokio::{
@@ -36,7 +36,10 @@ impl EncodedClipboard {
     }
 }
 
-static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
+static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
+    let clipboard = ClipboardContext::new().unwrap().get_contents().unwrap();
+    RwLock::const_new(EncodedClipboard::encode(clipboard.as_str()))
+});
 
 pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow::Result<()> {
     let stream = TcpStream::connect(&addr).await?;
@@ -89,13 +92,15 @@ fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
 async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
     let mut ctx = ClipboardContext::new().unwrap();
 
+    LazyLock::force(&CLIPBOARD);
+
     loop {
         tokio::time::sleep(refresh_rate).await;
         let new_clip = ctx.get_contents().unwrap();
         let encoded = EncodedClipboard::encode(&new_clip);
-        if CLIPBOARD.read().await.as_ref() != Some(&encoded) {
+        if *CLIPBOARD.read().await != encoded {
             debug!("Local clipboard change: {encoded:?}");
-            *CLIPBOARD.write().await = Some(encoded);
+            *CLIPBOARD.write().await = encoded;
             notify.notify_waiters();
         }
     }
@@ -114,15 +119,12 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
         tokio::select! {
             _notified = notify.notified() => {
                 // Someone has updated the clipboard. Send it to everyone else.
-                let lock = CLIPBOARD.read().await;
-                let new_clip = lock
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Invariant breached: notified before clipboard was initialised?"))?;
+                let new_clip = CLIPBOARD.read().await;
                 // We're holding a read lock while we write the bytes into
                 // the buffer. Probably not a big deal?
                 writer.write_all(new_clip.as_bytes_with_nul()).await?;
                 debug!("Sent {new_clip:?} to {remote_addr}");
-                drop(lock);
+                drop(new_clip);
                 writer.flush().await?;
             },
             _readable = reader.get_ref().readable() => {
@@ -135,7 +137,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
 
                 let decoded = new_clip.decode();
                 clip_ctx.set_contents(decoded).unwrap();
-                *CLIPBOARD.write().await = Some(new_clip);
+                *CLIPBOARD.write().await = new_clip;
 
                 // We're not a waiter, so we won't get woken up by our own update later
                 notify.notify_waiters();
