@@ -86,9 +86,8 @@ pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<(
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
 
     loop {
-        let (stream, _addr) = listener.accept().await?;
+        let (stream, client_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        let client_addr = stream.peer_addr()?;
         info!("New client {client_addr} connected");
         let notify = Arc::clone(&notify);
 
