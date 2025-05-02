@@ -125,6 +125,8 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
             },
             _readable = reader.get_ref().readable() => {
                 let mut incoming_bytes = Vec::new();
+
+                // TODO handle incomplete message?
                 reader.read_until(0, &mut incoming_bytes).await?;
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
                 debug!("Received new clipboard: {new_clip:?}");
