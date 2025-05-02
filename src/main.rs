@@ -1,6 +1,5 @@
 use clap::Parser;
 use std::{net::SocketAddrV4, time::Duration};
-use tracing_subscriber::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_logging() {
+    use tracing_subscriber::prelude::*;
     let subscriber = tracing_subscriber::registry();
 
     // Respect RUST_LOG, falling back to INFO
@@ -43,5 +43,5 @@ struct Options {
 }
 
 fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {
-    Ok(Duration::from_millis(s.parse()?))
+    s.parse().map(Duration::from_millis)
 }
