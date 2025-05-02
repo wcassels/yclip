@@ -94,6 +94,9 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
     let mut get_text = || -> anyhow::Result<Option<String>> {
         use arboard::Error;
         match ctx.get_text() {
+            // We're not interested in broadcasting our clipboard if it gets reset
+            // for whatever reason
+            Ok(s) if s.is_empty() => Ok(None),
             Ok(s) => Ok(Some(s)),
             // Including ClipboardOccupied here feels a bit hacky, but semantically
             // it's gonna mean we retry so :shrug:
