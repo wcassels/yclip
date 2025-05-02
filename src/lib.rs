@@ -12,7 +12,7 @@ use tokio::{
 };
 use tracing::*;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct EncodedClipboard(CString);
 
 impl EncodedClipboard {
@@ -86,23 +86,22 @@ fn spawn_local_watcher(notify: Arc<Notify>) {
 
 async fn watch_local(notify: Arc<Notify>) -> anyhow::Result<()> {
     let mut ctx = ClipboardContext::new().unwrap();
-    let mut current_clip = ctx.get_contents().unwrap();
 
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let new_clip = ctx.get_contents().unwrap();
-        if new_clip != current_clip {
-            let encoded = EncodedClipboard::encode(&new_clip);
+        let encoded = EncodedClipboard::encode(&new_clip);
+        if CLIPBOARD.read().await.as_ref() != Some(&encoded) {
             debug!("Local clipboard change: {encoded:?}");
             *CLIPBOARD.write().await = Some(encoded);
             notify.notify_waiters();
-            current_clip = new_clip;
         }
     }
 }
 
 async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Result<()> {
-    info!("New peer {} connected", stream.peer_addr()?);
+    let remote_addr = stream.peer_addr()?;
+    info!("New peer {} connected", remote_addr);
 
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
