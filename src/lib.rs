@@ -48,6 +48,7 @@ pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_rate);
     watch_remote(stream, notify).await?; // Blocks
+    info!("Host disconnected");
 
     Ok(())
 }
@@ -68,17 +69,17 @@ pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<(
     loop {
         let (stream, _addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
+        let client_addr = stream.peer_addr()?;
+        info!("New client {client_addr} connected");
         let notify = Arc::clone(&notify);
-        spawn_remote_watcher(stream, Arc::clone(&notify));
-    }
-}
 
-fn spawn_remote_watcher(stream: TcpStream, notify: Arc<Notify>) {
-    tokio::task::spawn(async {
-        if let Err(e) = watch_remote(stream, notify).await {
-            error!("Remote watcher exited: {e}");
-        }
-    });
+        tokio::task::spawn(async move {
+            match watch_remote(stream, notify).await {
+                Ok(()) => info!("Client {client_addr} disconnected"),
+                Err(e) => error!("Remote watcher exited: {e}"),
+            }
+        });
+    }
 }
 
 fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
@@ -108,7 +109,6 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
 
 async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Result<()> {
     let remote_addr = stream.peer_addr()?;
-    info!("New peer {} connected", remote_addr);
 
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
@@ -131,7 +131,12 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 let mut incoming_bytes = Vec::new();
 
                 // TODO handle incomplete message?
-                reader.read_until(0, &mut incoming_bytes).await?;
+                let bytes_read = reader.read_until(0, &mut incoming_bytes).await?;
+                if bytes_read == 0 {
+                    // EOF
+                    return Ok(())
+                }
+
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
                 debug!("Received new clipboard: {new_clip:?}");
 
