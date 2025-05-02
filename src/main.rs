@@ -3,6 +3,8 @@ use std::net::SocketAddrV4;
 
 #[derive(clap::Parser)]
 struct Options {
+    #[arg(short, long, conflicts_with = "host", default_value_t = 9986)]
+    port: u16,
     host: Option<SocketAddrV4>,
 }
 
@@ -13,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr) = opts.host {
         yclip::run_satellite(addr).await?;
     } else {
-        yclip::run_host().await?;
+        yclip::run_host(opts.port).await?;
     }
 
     Ok(())

@@ -45,9 +45,9 @@ pub async fn run_satellite(addr: SocketAddrV4) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run_host() -> anyhow::Result<()> {
+pub async fn run_host(port: u16) -> anyhow::Result<()> {
     let listener =
-        tokio::net::TcpListener::bind(SocketAddr::new([0, 0, 0, 0].into(), 9986)).await?;
+        tokio::net::TcpListener::bind(SocketAddr::new([0, 0, 0, 0].into(), port)).await?;
 
     // What do we need to do?
     // 1. Monitor local clipboard & broadcast to all non-self hosts
