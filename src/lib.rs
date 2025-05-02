@@ -40,6 +40,7 @@ static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
 
 pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow::Result<()> {
     let stream = TcpStream::connect(&addr).await?;
+    stream.set_nodelay(true)?;
     info!("Connected to clipboard on {addr}");
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_rate);
@@ -63,6 +64,7 @@ pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<(
 
     loop {
         let (stream, _addr) = listener.accept().await?;
+        stream.set_nodelay(true)?;
         let notify = Arc::clone(&notify);
         spawn_remote_watcher(stream, Arc::clone(&notify));
     }
