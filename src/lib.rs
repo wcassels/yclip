@@ -17,12 +17,12 @@ struct EncodedClipboard(CString);
 
 impl EncodedClipboard {
     pub fn decode(&self) -> String {
-        let utf8 = postcard_cobs::decode_vec(self.0.as_bytes()).unwrap();
+        let utf8 = cobs::decode_vec(self.0.as_bytes()).unwrap();
         String::from_utf8(utf8).unwrap()
     }
 
     pub fn encode(clipboard: &str) -> Self {
-        let mut bytes = postcard_cobs::encode_vec(clipboard.as_bytes());
+        let mut bytes = cobs::encode_vec(clipboard.as_bytes());
         bytes.push(0);
         Self(CString::from_vec_with_nul(bytes).unwrap())
     }
