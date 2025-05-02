@@ -10,7 +10,9 @@ use tokio::{
     net::TcpStream,
     sync::{Notify, RwLock},
 };
+use tracing::*;
 
+#[derive(Debug)]
 struct EncodedClipboard(CString);
 
 impl EncodedClipboard {
@@ -25,8 +27,8 @@ impl EncodedClipboard {
         Self(CString::from_vec_with_nul(bytes).unwrap())
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.to_bytes()
+    pub fn as_bytes_with_nul(&self) -> &[u8] {
+        self.0.as_bytes_with_nul()
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -37,7 +39,8 @@ impl EncodedClipboard {
 static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
 
 pub async fn run_satellite(addr: SocketAddrV4) -> anyhow::Result<()> {
-    let stream = TcpStream::connect(addr).await?;
+    let stream = TcpStream::connect(&addr).await?;
+    info!("Connected to clipboard on {addr}");
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify));
     watch_remote(stream, notify).await?; // Blocks
@@ -48,6 +51,8 @@ pub async fn run_satellite(addr: SocketAddrV4) -> anyhow::Result<()> {
 pub async fn run_host(port: u16) -> anyhow::Result<()> {
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::new([0, 0, 0, 0].into(), port)).await?;
+
+    info!("Listening for connections on port {port}");
 
     // What do we need to do?
     // 1. Monitor local clipboard & broadcast to all non-self hosts
@@ -66,7 +71,7 @@ pub async fn run_host(port: u16) -> anyhow::Result<()> {
 fn spawn_remote_watcher(stream: TcpStream, notify: Arc<Notify>) {
     tokio::task::spawn(async {
         if let Err(e) = watch_remote(stream, notify).await {
-            // log!
+            error!("Remote watcher exited: {e}");
         }
     });
 }
@@ -74,7 +79,7 @@ fn spawn_remote_watcher(stream: TcpStream, notify: Arc<Notify>) {
 fn spawn_local_watcher(notify: Arc<Notify>) {
     tokio::task::spawn(async {
         if let Err(e) = watch_local(notify).await {
-            // log!
+            error!("Local watcher exited: {e}");
         }
     });
 }
@@ -88,6 +93,10 @@ async fn watch_local(notify: Arc<Notify>) -> anyhow::Result<()> {
         let new_clip = ctx.get_contents().unwrap();
         if new_clip != current_clip {
             let encoded = EncodedClipboard::encode(&new_clip);
+            debug!(
+                "Local clipboard change: {encoded:?} ({:?})",
+                encoded.as_bytes_with_nul()
+            );
             *CLIPBOARD.write().await = Some(encoded);
             notify.notify_waiters();
             current_clip = new_clip;
@@ -110,7 +119,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 .ok_or_else(|| anyhow::anyhow!("Invariant breached: notified before clipboard was initialised?"))?;
             // We're holding a read lock while we write the bytes into
             // the buffer. Probably not a big deal?
-            writer.write_all(new_clip.as_bytes()).await?;
+            writer.write_all(new_clip.as_bytes_with_nul()).await?;
             drop(lock);
             writer.flush().await?;
         },

@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::net::SocketAddrV4;
+use tracing_subscriber::prelude::*;
 
 #[derive(clap::Parser)]
 struct Options {
@@ -10,6 +11,7 @@ struct Options {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    init_logging();
     let opts = Options::parse();
 
     if let Some(addr) = opts.host {
@@ -19,4 +21,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn init_logging() {
+    let subscriber = tracing_subscriber::registry();
+
+    // Respect RUST_LOG, falling back to INFO
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy();
+    let subscriber = subscriber.with(filter);
+
+    let layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let subscriber = subscriber.with(layer);
+    subscriber.init();
 }
