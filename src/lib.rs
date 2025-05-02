@@ -2,6 +2,7 @@ use arboard::Clipboard;
 use std::{
     ffi::CString,
     net::{SocketAddr, SocketAddrV4},
+    ops::Deref,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -16,12 +17,12 @@ use tracing::*;
 struct EncodedClipboard(CString);
 
 impl EncodedClipboard {
-    pub fn decode(&self) -> String {
-        let utf8 = cobs::decode_vec(self.0.as_bytes()).unwrap();
-        String::from_utf8(utf8).unwrap()
+    pub fn decode(&self) -> anyhow::Result<String> {
+        let utf8 = cobs::decode_vec(self.0.as_bytes())?;
+        Ok(String::from_utf8(utf8)?)
     }
 
-    pub fn encode(clipboard: &str) -> Self {
+    pub fn encode(clipboard: NonEmptyString) -> Self {
         let mut bytes = cobs::encode_vec(clipboard.as_bytes());
         bytes.push(0);
         Self(CString::from_vec_with_nul(bytes).unwrap())
@@ -36,9 +37,31 @@ impl EncodedClipboard {
     }
 }
 
+#[derive(Debug)]
+struct NonEmptyString(String);
+
+impl NonEmptyString {
+    pub fn new(s: String) -> Option<Self> {
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
+    }
+}
+
+impl Deref for NonEmptyString {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
 static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
+    // TODO: These unwraps are getting a bit unwieldy...
     let clipboard = Clipboard::new().unwrap().get_text().unwrap();
-    RwLock::const_new(EncodedClipboard::encode(clipboard.as_str()))
+    let non_empty = NonEmptyString::new(clipboard).unwrap();
+    RwLock::const_new(EncodedClipboard::encode(non_empty))
 });
 
 pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow::Result<()> {
@@ -91,13 +114,12 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
 
     LazyLock::force(&CLIPBOARD);
 
-    let mut get_text = || -> anyhow::Result<Option<String>> {
+    let mut get_text = || -> anyhow::Result<Option<NonEmptyString>> {
         use arboard::Error;
         match ctx.get_text() {
             // We're not interested in broadcasting our clipboard if it gets reset
-            // for whatever reason
-            Ok(s) if s.is_empty() => Ok(None),
-            Ok(s) => Ok(Some(s)),
+            // for whatever reason. It also makes the COBS decoder sad apparently
+            Ok(s) => Ok(NonEmptyString::new(s)),
             // Including ClipboardOccupied here feels a bit hacky, but semantically
             // it's gonna mean we retry so :shrug:
             Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
@@ -111,7 +133,7 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
             continue;
         };
 
-        let encoded = EncodedClipboard::encode(&new_clip);
+        let encoded = EncodedClipboard::encode(new_clip);
         if *CLIPBOARD.read().await != encoded {
             debug!("Local clipboard change: {encoded:?}");
             *CLIPBOARD.write().await = encoded;
@@ -153,8 +175,14 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
                 debug!("Received {new_clip:?} from {remote_addr}");
 
-                let decoded = new_clip.decode();
-                clip_ctx.set_text(decoded).unwrap();
+                let decoded = match new_clip.decode() {
+                    Ok(d) => d,
+                    Err(e) => {
+                        error!("Couldn't decode incoming clipboard. What happened? {e}");
+                        continue;
+                    }
+                };
+                clip_ctx.set_text(decoded)?;
                 *CLIPBOARD.write().await = new_clip;
 
                 // We're not a waiter, so we won't get woken up by our own update later
