@@ -1,4 +1,4 @@
-use clipboard::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard;
 use std::{
     ffi::CString,
     net::{SocketAddr, SocketAddrV4},
@@ -37,7 +37,7 @@ impl EncodedClipboard {
 }
 
 static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
-    let clipboard = ClipboardContext::new().unwrap().get_contents().unwrap();
+    let clipboard = Clipboard::new().unwrap().get_text().unwrap();
     RwLock::const_new(EncodedClipboard::encode(clipboard.as_str()))
 });
 
@@ -91,13 +91,13 @@ fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
 }
 
 async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
-    let mut ctx = ClipboardContext::new().unwrap();
+    let mut ctx = Clipboard::new().unwrap();
 
     LazyLock::force(&CLIPBOARD);
 
     loop {
         tokio::time::sleep(refresh_rate).await;
-        let new_clip = ctx.get_contents().unwrap();
+        let new_clip = ctx.get_text().unwrap();
         let encoded = EncodedClipboard::encode(&new_clip);
         if *CLIPBOARD.read().await != encoded {
             debug!("Local clipboard change: {encoded:?}");
@@ -113,7 +113,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
     let mut reader = tokio::io::BufReader::new(read);
-    let mut clip_ctx = ClipboardContext::new().unwrap();
+    let mut clip_ctx = Clipboard::new().unwrap();
 
     loop {
         tokio::select! {
@@ -141,7 +141,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                 debug!("Received new clipboard: {new_clip:?}");
 
                 let decoded = new_clip.decode();
-                clip_ctx.set_contents(decoded).unwrap();
+                clip_ctx.set_text(decoded).unwrap();
                 *CLIPBOARD.write().await = new_clip;
 
                 // We're not a waiter, so we won't get woken up by our own update later
