@@ -19,11 +19,15 @@ pub const DEFAULT_PORT: u16 = 9986;
 pub struct HostAddr(SocketAddr);
 
 impl HostAddr {
-    async fn connect(self) -> anyhow::Result<TcpStream> {
+    async fn connect(&self) -> anyhow::Result<TcpStream> {
         let stream = TcpStream::connect(&self.0).await?;
         stream.set_nodelay(true)?;
         info!("Connected to clipboard on {}", self.0);
         Ok(stream)
+    }
+
+    pub fn into_inner(self) -> SocketAddr {
+        self.0
     }
 }
 
@@ -31,7 +35,7 @@ impl FromStr for HostAddr {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let target = if s.contains(":") {
+        let target = if s.contains(':') {
             s.to_string()
         } else {
             format!("{s}:{DEFAULT_PORT}")
@@ -78,7 +82,7 @@ pub async fn run_satellite(addr: HostAddr, refresh_interval: Duration) -> anyhow
     let stream = addr.connect().await?;
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
-    watch_remote(stream, notify).await?; // Blocks
+    watch_remote(stream, notify, addr.into_inner()).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
@@ -101,7 +105,7 @@ pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<(
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
-            match watch_remote(stream, notify).await {
+            match watch_remote(stream, notify, client_addr).await {
                 Ok(()) => info!("Client {client_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited: {e}"),
             }
@@ -149,9 +153,11 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
     }
 }
 
-async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Result<()> {
-    let remote_addr = stream.peer_addr()?;
-
+async fn watch_remote(
+    mut stream: TcpStream,
+    notify: Arc<Notify>,
+    remote_addr: SocketAddr,
+) -> anyhow::Result<()> {
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
     let mut reader = tokio::io::BufReader::new(read);
