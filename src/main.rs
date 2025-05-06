@@ -44,6 +44,7 @@ struct Options {
     /// Local clipboard check interval (ms)
     #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
     refresh_interval: Duration,
+    /// Connect to the yclip server running on this host
     host: Option<yclip::HostAddr>,
 }
 
