@@ -2,7 +2,6 @@ use arboard::Clipboard;
 use std::{
     ffi::CString,
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
-    ops::Deref,
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -55,10 +54,13 @@ impl EncodedClipboard {
         Ok(String::from_utf8(utf8)?)
     }
 
-    pub fn encode(clipboard: NonEmptyString) -> Self {
+    pub fn encode(clipboard: String) -> Option<Self> {
+        if clipboard.is_empty() {
+            return None;
+        }
         let mut bytes = cobs::encode_vec(clipboard.as_bytes());
         bytes.push(0);
-        Self(CString::from_vec_with_nul(bytes).unwrap())
+        Some(Self(CString::from_vec_with_nul(bytes).unwrap()))
     }
 
     pub fn as_bytes_with_nul(&self) -> &[u8] {
@@ -67,26 +69,6 @@ impl EncodedClipboard {
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self(CString::from_vec_with_nul(bytes).unwrap())
-    }
-}
-
-#[derive(Debug)]
-struct NonEmptyString(String);
-
-impl NonEmptyString {
-    pub fn new(s: String) -> Option<Self> {
-        if s.is_empty() {
-            None
-        } else {
-            Some(Self(s))
-        }
-    }
-}
-
-impl Deref for NonEmptyString {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
     }
 }
 
@@ -143,7 +125,7 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
         match ctx.get_text() {
             // We're not interested in broadcasting our clipboard if it gets reset
             // for whatever reason. It also makes the COBS decoder sad apparently
-            Ok(s) => Ok(NonEmptyString::new(s).map(EncodedClipboard::encode)),
+            Ok(s) => Ok(EncodedClipboard::encode(s)),
             // Including ClipboardOccupied here feels a bit hacky, but semantically
             // it's gonna mean we retry so :shrug:
             Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
