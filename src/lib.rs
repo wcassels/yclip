@@ -136,7 +136,7 @@ fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
 }
 
 async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
-    let mut ctx = Clipboard::new().unwrap();
+    let mut ctx = Clipboard::new()?;
 
     let mut get_text = || -> anyhow::Result<Option<EncodedClipboard>> {
         use arboard::Error;
@@ -173,7 +173,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
     let (read, write) = stream.split();
     let mut writer = tokio::io::BufWriter::new(write);
     let mut reader = tokio::io::BufReader::new(read);
-    let mut clip_ctx = Clipboard::new().unwrap();
+    let mut clip_ctx = Clipboard::new()?;
 
     loop {
         tokio::select! {
