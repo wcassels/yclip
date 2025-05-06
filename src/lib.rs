@@ -4,7 +4,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     ops::Deref,
     str::FromStr,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -90,12 +90,7 @@ impl Deref for NonEmptyString {
     }
 }
 
-static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
-    // TODO: These unwraps are getting a bit unwieldy...
-    let clipboard = Clipboard::new().unwrap().get_text().unwrap();
-    let non_empty = NonEmptyString::new(clipboard).unwrap();
-    RwLock::const_new(EncodedClipboard::encode(non_empty))
-});
+static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
 
 pub async fn run_satellite(addr: HostAddr, refresh_interval: Duration) -> anyhow::Result<()> {
     let stream = addr.connect().await?;
@@ -143,14 +138,12 @@ fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
 async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
     let mut ctx = Clipboard::new().unwrap();
 
-    LazyLock::force(&CLIPBOARD);
-
-    let mut get_text = || -> anyhow::Result<Option<NonEmptyString>> {
+    let mut get_text = || -> anyhow::Result<Option<EncodedClipboard>> {
         use arboard::Error;
         match ctx.get_text() {
             // We're not interested in broadcasting our clipboard if it gets reset
             // for whatever reason. It also makes the COBS decoder sad apparently
-            Ok(s) => Ok(NonEmptyString::new(s)),
+            Ok(s) => Ok(NonEmptyString::new(s).map(EncodedClipboard::encode)),
             // Including ClipboardOccupied here feels a bit hacky, but semantically
             // it's gonna mean we retry so :shrug:
             Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
@@ -158,16 +151,17 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
         }
     };
 
+    *CLIPBOARD.write().await = get_text()?;
+
     loop {
         tokio::time::sleep(refresh_rate).await;
         let Some(new_clip) = get_text()? else {
             continue;
         };
 
-        let encoded = EncodedClipboard::encode(new_clip);
-        if *CLIPBOARD.read().await != encoded {
-            debug!("Local clipboard change: {encoded:?}");
-            *CLIPBOARD.write().await = encoded;
+        if CLIPBOARD.read().await.as_ref() != Some(&new_clip) {
+            debug!("Local clipboard change: {new_clip:?}");
+            *CLIPBOARD.write().await = Some(new_clip);
             notify.notify_waiters();
         }
     }
@@ -185,12 +179,13 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
         tokio::select! {
             _notified = notify.notified() => {
                 // Someone has updated the clipboard. Send it to everyone else.
-                let new_clip = CLIPBOARD.read().await;
+                let lock = CLIPBOARD.read().await;
+                let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
                 // We're holding a read lock while we write the bytes into
                 // the buffer. Probably not a big deal?
                 writer.write_all(new_clip.as_bytes_with_nul()).await?;
                 debug!("Sent {new_clip:?} to {remote_addr}");
-                drop(new_clip);
+                drop(lock);
                 writer.flush().await?;
             },
             _readable = reader.get_ref().readable() => {
@@ -214,7 +209,7 @@ async fn watch_remote(mut stream: TcpStream, notify: Arc<Notify>) -> anyhow::Res
                     }
                 };
                 clip_ctx.set_text(decoded)?;
-                *CLIPBOARD.write().await = new_clip;
+                *CLIPBOARD.write().await = Some(new_clip);
 
                 // We're not a waiter, so we won't get woken up by our own update later
                 notify.notify_waiters();
