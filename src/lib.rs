@@ -1,8 +1,9 @@
 use arboard::Clipboard;
 use std::{
     ffi::CString,
-    net::{SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     ops::Deref,
+    str::FromStr,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -12,6 +13,38 @@ use tokio::{
     sync::{Notify, RwLock},
 };
 use tracing::*;
+
+pub const DEFAULT_PORT: u16 = 9986;
+
+#[derive(Clone, Debug)]
+pub struct HostAddr(SocketAddr);
+
+impl HostAddr {
+    async fn connect(self) -> anyhow::Result<TcpStream> {
+        let stream = TcpStream::connect(&self.0).await?;
+        stream.set_nodelay(true)?;
+        info!("Connected to clipboard on {}", self.0);
+        Ok(stream)
+    }
+}
+
+impl FromStr for HostAddr {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let target = if s.contains(":") {
+            s.to_string()
+        } else {
+            format!("{s}:{DEFAULT_PORT}")
+        };
+        let addr = target
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Couldn't resolve {target} to a socket address"))?;
+        info!("Resolved {target} to {addr}");
+        Ok(Self(addr))
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct EncodedClipboard(CString);
@@ -64,10 +97,8 @@ static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
     RwLock::const_new(EncodedClipboard::encode(non_empty))
 });
 
-pub async fn run_satellite(addr: SocketAddrV4, refresh_interval: Duration) -> anyhow::Result<()> {
-    let stream = TcpStream::connect(&addr).await?;
-    stream.set_nodelay(true)?;
-    info!("Connected to clipboard on {addr}");
+pub async fn run_satellite(addr: HostAddr, refresh_interval: Duration) -> anyhow::Result<()> {
+    let stream = addr.connect().await?;
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
     watch_remote(stream, notify).await?; // Blocks
@@ -78,7 +109,8 @@ pub async fn run_satellite(addr: SocketAddrV4, refresh_interval: Duration) -> an
 
 pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<()> {
     let listener =
-        tokio::net::TcpListener::bind(SocketAddr::new([0, 0, 0, 0].into(), port)).await?;
+        tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))
+            .await?;
 
     info!("Listening for connections on port {port}");
 
