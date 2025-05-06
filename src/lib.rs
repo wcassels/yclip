@@ -64,12 +64,12 @@ static CLIPBOARD: LazyLock<RwLock<EncodedClipboard>> = LazyLock::new(|| {
     RwLock::const_new(EncodedClipboard::encode(non_empty))
 });
 
-pub async fn run_satellite(addr: SocketAddrV4, refresh_rate: Duration) -> anyhow::Result<()> {
+pub async fn run_satellite(addr: SocketAddrV4, refresh_interval: Duration) -> anyhow::Result<()> {
     let stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
     info!("Connected to clipboard on {addr}");
     let notify = Arc::new(Notify::const_new());
-    spawn_local_watcher(Arc::clone(&notify), refresh_rate);
+    spawn_local_watcher(Arc::clone(&notify), refresh_interval);
     watch_remote(stream, notify).await?; // Blocks
     info!("Host disconnected");
 
