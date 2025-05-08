@@ -165,7 +165,7 @@ async fn watch_remote(
 
     let mut incoming_bytes = Vec::new();
     loop {
-        trace!("Selecting... (current bytes: {incoming_bytes:?})");
+        trace!("{remote_addr}: selecting... (current bytes: {incoming_bytes:?})");
         tokio::select! {
             _notified = notify.notified() => {
                 trace!("Notified of clipboard change");
