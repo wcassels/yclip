@@ -169,7 +169,7 @@ async fn watch_remote(
         tokio::select! {
             _notified = notify.notified() => {
                 trace!("Notified of clipboard change");
-                // Someone has updated the clipboard. Send it to everyone else.
+                // Someone has updated the clipboard. Send it to our client.
                 let lock = CLIPBOARD.read().await;
                 let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
                 // We're holding a read lock while we write the bytes into
