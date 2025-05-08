@@ -163,9 +163,12 @@ async fn watch_remote(
     let mut reader = tokio::io::BufReader::new(read);
     let mut clip_ctx = Clipboard::new()?;
 
+    let mut incoming_bytes = Vec::new();
     loop {
+        trace!("Selecting... (current bytes: {incoming_bytes:?})");
         tokio::select! {
             _notified = notify.notified() => {
+                trace!("Notified of clipboard change");
                 // Someone has updated the clipboard. Send it to everyone else.
                 let lock = CLIPBOARD.read().await;
                 let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
@@ -176,17 +179,15 @@ async fn watch_remote(
                 drop(lock);
                 writer.flush().await?;
             },
-            _readable = reader.get_ref().readable() => {
-                let mut incoming_bytes = Vec::new();
-
-                // TODO handle incomplete message?
-                let bytes_read = reader.read_until(0, &mut incoming_bytes).await?;
+            bytes_read = reader.read_until(0, &mut incoming_bytes) => {
+                let bytes_read = bytes_read?;
                 if bytes_read == 0 {
                     // EOF
-                    return Ok(())
+                    return Ok(());
                 }
 
                 let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
+                incoming_bytes = Vec::new();
                 debug!("Received {new_clip:?} from {remote_addr}");
 
                 let decoded = match new_clip.decode() {
@@ -201,7 +202,7 @@ async fn watch_remote(
 
                 // We're not a waiter, so we won't get woken up by our own update later
                 notify.notify_waiters();
-            }
+            },
         }
     }
 }
