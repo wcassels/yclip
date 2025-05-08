@@ -184,6 +184,10 @@ async fn watch_remote(
                 if bytes_read == 0 {
                     // EOF
                     return Ok(());
+                } else if incoming_bytes.last().copied() != Some(0) {
+                    // TODO: Actually implement handshake/encryption so can worry less about malicious messages
+                    warn!(%remote_addr, "Mid-way through receiving incomplete message. This read: {bytes_read}, total: {} bytes", incoming_bytes.len());
+                    continue;
                 }
 
                 let completed_message = incoming_bytes.clone();
