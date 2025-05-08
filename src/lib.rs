@@ -1,6 +1,6 @@
 use arboard::Clipboard;
 use std::{
-    ffi::CString,
+    ffi::{CString, FromVecWithNulError},
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     str::FromStr,
     sync::Arc,
@@ -71,8 +71,8 @@ impl EncodedClipboard {
         self.0.as_bytes_with_nul()
     }
 
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self(CString::from_vec_with_nul(bytes).unwrap())
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, FromVecWithNulError> {
+        CString::from_vec_with_nul(bytes).map(Self)
     }
 }
 
@@ -186,9 +186,19 @@ async fn watch_remote(
                     return Ok(());
                 }
 
-                let new_clip = EncodedClipboard::from_bytes(incoming_bytes);
-                incoming_bytes = Vec::new();
-                debug!("Received {new_clip:?} from {remote_addr}");
+                let completed_message = incoming_bytes.clone();
+                incoming_bytes.clear();
+
+                let new_clip = match EncodedClipboard::from_bytes(completed_message) {
+                    Ok(c) => {
+                        debug!("Received {c:?} from {remote_addr}");
+                        c
+                    }
+                    Err(e) => {
+                        error!("Incoming clipboard from {remote_addr} was malformed: {e:?}");
+                        continue;
+                    }
+                };
 
                 let decoded = match new_clip.decode() {
                     Ok(d) => d,
