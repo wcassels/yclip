@@ -127,12 +127,25 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
     let mut get_text = || -> anyhow::Result<Option<EncodedClipboard>> {
         use arboard::Error;
         match ctx.get_text() {
-            // We're not interested in broadcasting our clipboard if it gets reset
-            // for whatever reason. It also makes the COBS decoder sad apparently
+            // Handles empty clipboard
             Ok(s) => Ok(EncodedClipboard::encode(s)),
-            // Including ClipboardOccupied here feels a bit hacky, but semantically
-            // it's gonna mean we retry so :shrug:
+            // Retry
             Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
+            // For text, this means non-utf8 AFAICT.
+            Err(Error::ConversionFailure) => {
+                warn!("Clipboard conversion failure. Does the clipboard contain non-utf8 text?");
+                Ok(None)
+            }
+            Err(Error::Unknown { description }) => {
+                warn!("Error reading clipboard: {description}");
+                // Retry? From a quick look at the library's source, these errors seem
+                // transient
+                Ok(None)
+            }
+            // No point retrying on this
+            Err(e @ Error::ClipboardNotSupported) => Err(e.into()),
+            // arboard::Error is marked as non_exhastive so we need a catch-all;
+            // just fall over.
             Err(e) => Err(e.into()),
         }
     };
