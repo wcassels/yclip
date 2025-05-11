@@ -40,12 +40,17 @@ impl FromStr for HostAddr {
         } else {
             format!("{s}:{DEFAULT_PORT}")
         };
-        let addr = target
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("Couldn't resolve {target} to a socket address"))?;
-        info!("Resolved {target} to {addr}");
-        Ok(Self(addr))
+        // Only log the "Resolved {} to {}" message if the argument wasn't already a parseable socketaddr
+        target
+            .parse()
+            .or_else(|_| {
+                target
+                    .to_socket_addrs()?
+                    .next()
+                    .inspect(|addr| info!("Resolved {target} to {addr}"))
+                    .ok_or_else(|| anyhow::anyhow!("Couldn't resolve {target} to a socket address"))
+            })
+            .map(Self)
     }
 }
 
