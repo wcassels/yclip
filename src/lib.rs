@@ -1,58 +1,18 @@
 use arboard::Clipboard;
 use std::{
     ffi::{CString, FromVecWithNulError},
-    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
-    str::FromStr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpStream, UdpSocket},
     sync::{Notify, RwLock},
 };
 use tracing::*;
 
-pub const DEFAULT_PORT: u16 = 9986;
-
-#[derive(Clone, Debug)]
-pub struct HostAddr(SocketAddr);
-
-impl HostAddr {
-    async fn connect(&self) -> anyhow::Result<TcpStream> {
-        let stream = TcpStream::connect(&self.0).await?;
-        stream.set_nodelay(true)?;
-        info!("Connected to clipboard on {}", self.0);
-        Ok(stream)
-    }
-
-    pub fn into_inner(self) -> SocketAddr {
-        self.0
-    }
-}
-
-impl FromStr for HostAddr {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let target = if s.contains(':') {
-            s.to_string()
-        } else {
-            format!("{s}:{DEFAULT_PORT}")
-        };
-        // Only log the "Resolved {} to {}" message if the argument wasn't already a parseable socketaddr
-        target
-            .parse()
-            .or_else(|_| {
-                target
-                    .to_socket_addrs()?
-                    .next()
-                    .inspect(|addr| info!("Resolved {target} to {addr}"))
-                    .ok_or_else(|| anyhow::anyhow!("Couldn't resolve {target} to a socket address"))
-            })
-            .map(Self)
-    }
-}
+pub const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 #[derive(Debug, PartialEq, Eq)]
 struct EncodedClipboard(CString);
@@ -83,22 +43,32 @@ impl EncodedClipboard {
 
 static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
 
-pub async fn run_satellite(addr: HostAddr, refresh_interval: Duration) -> anyhow::Result<()> {
-    let stream = addr.connect().await?;
+pub async fn run_satellite(addr: SocketAddr, refresh_interval: Duration) -> anyhow::Result<()> {
+    let stream = TcpStream::connect(&addr).await?;
+    stream.set_nodelay(true)?;
+    info!("Connected to clipboard on {addr}");
+
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
-    watch_remote(stream, notify, addr.into_inner()).await?; // Blocks
+    watch_remote(stream, notify, addr).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
 }
 
-pub async fn run_host(port: u16, refresh_interval: Duration) -> anyhow::Result<()> {
-    let listener =
-        tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))
-            .await?;
+pub async fn run_host(refresh_interval: Duration) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(UNSPECIFIED).await?;
 
-    info!("Listening for connections on port {port}");
+    let local_addr = {
+        let socket = UdpSocket::bind(UNSPECIFIED).await?;
+        socket.connect("1.1.1.1:1").await?;
+        socket.local_addr()?.ip()
+    };
+
+    info!(
+        "Run `yclip {local_addr}:{}` to connect to this clipboard",
+        listener.local_addr()?.port()
+    );
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);

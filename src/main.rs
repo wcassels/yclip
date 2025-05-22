@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,7 +9,7 @@ async fn main() -> anyhow::Result<()> {
     let res = if let Some(addr) = opts.host {
         yclip::run_satellite(addr, opts.refresh_interval).await
     } else {
-        yclip::run_host(opts.port, opts.refresh_interval).await
+        yclip::run_host(opts.refresh_interval).await
     };
 
     if let Err(e) = res {
@@ -38,14 +38,11 @@ fn init_logging() {
 #[derive(clap::Parser)]
 #[command(version)]
 struct Options {
-    /// Listen for incoming connections on this port
-    #[arg(short, long, conflicts_with = "host", default_value_t = yclip::DEFAULT_PORT)]
-    port: u16,
     /// Local clipboard check interval (ms)
     #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
     refresh_interval: Duration,
     /// Connect to the yclip server running on this host
-    host: Option<yclip::HostAddr>,
+    host: Option<SocketAddr>,
 }
 
 fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {
