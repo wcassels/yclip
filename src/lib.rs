@@ -23,13 +23,11 @@ impl EncodedClipboard {
         Ok(String::from_utf8(utf8)?)
     }
 
-    pub fn encode(clipboard: String) -> Option<Self> {
-        if clipboard.is_empty() {
-            return None;
-        }
+    // Assumes non-empty clipboard
+    pub fn encode(clipboard: &str) -> Self {
         let mut bytes = cobs::encode_vec(clipboard.as_bytes());
         bytes.push(0);
-        Some(Self(CString::from_vec_with_nul(bytes).unwrap()))
+        Self(CString::from_vec_with_nul(bytes).unwrap())
     }
 
     pub fn as_bytes_with_nul(&self) -> &[u8] {
@@ -99,11 +97,12 @@ fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
 async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
     let mut ctx = Clipboard::new()?;
 
-    let mut get_text = || -> anyhow::Result<Option<EncodedClipboard>> {
+    let mut get_text = || -> anyhow::Result<Option<String>> {
         use arboard::Error;
         match ctx.get_text() {
-            // Handles empty clipboard
-            Ok(s) => Ok(EncodedClipboard::encode(s)),
+            // Don't broadcast clipboard reset!
+            Ok(s) if s.is_empty() => Ok(None),
+            Ok(s) => Ok(Some(s)),
             // Retry
             Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
             // For text, this means non-utf8 AFAICT.
@@ -159,9 +158,10 @@ async fn watch_remote(
                 // Someone has updated the clipboard. Send it to our client.
                 let lock = CLIPBOARD.read().await;
                 let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
+                let encoded = EncodedClipboard::encode(new_clip);
                 // We're holding a read lock while we write the bytes into
-                // the buffer. Probably not a big deal?
-                writer.write_all(new_clip.as_bytes_with_nul()).await?;
+                // the buffer (just so we can log them afterwards!)
+                writer.write_all(encoded.as_bytes_with_nul()).await?;
                 debug!("Sent {new_clip:?} to {remote_addr}");
                 drop(lock);
                 writer.flush().await?;
@@ -198,8 +198,8 @@ async fn watch_remote(
                         continue;
                     }
                 };
-                clip_ctx.set_text(decoded)?;
-                *CLIPBOARD.write().await = Some(new_clip);
+                clip_ctx.set_text(decoded.as_str())?;
+                *CLIPBOARD.write().await = Some(decoded);
 
                 // We're not a waiter, so we won't get woken up by our own update later
                 notify.notify_waiters();
