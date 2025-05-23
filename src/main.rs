@@ -7,9 +7,9 @@ async fn main() -> anyhow::Result<()> {
     let opts = Options::parse();
 
     let res = if let Some(addr) = opts.host {
-        yclip::run_satellite(addr, opts.refresh_interval).await
+        yclip::run_satellite(addr, opts.refresh_interval, opts.secret).await
     } else {
-        yclip::run_host(opts.refresh_interval).await
+        yclip::run_host(opts.refresh_interval, opts.secret).await
     };
 
     if let Err(e) = res {
@@ -43,6 +43,9 @@ struct Options {
     refresh_interval: Duration,
     /// Connect to the yclip server running on this host
     host: Option<SocketAddr>,
+    #[arg(short, long)]
+    /// Encrypt clipboards using this secret
+    secret: Option<String>,
 }
 
 fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {

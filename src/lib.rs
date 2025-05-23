@@ -1,60 +1,124 @@
 use arboard::Clipboard;
 use std::{
-    ffi::{CString, FromVecWithNulError},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    net::{TcpStream, UdpSocket},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream, UdpSocket,
+    },
     sync::{Notify, RwLock},
 };
 use tracing::*;
 
+mod secure;
+
 pub const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
-#[derive(Debug, PartialEq, Eq)]
-struct EncodedClipboard(CString);
+struct Connection {
+    reader: BufReader<OwnedReadHalf>,
+    writer: OwnedWriteHalf,
+    peer_addr: SocketAddr,
+    noise: Option<secure::Noise>,
+    read_buf: Vec<u8>,
+    cobs_buf: Vec<u8>,
+}
 
-impl EncodedClipboard {
-    pub fn decode(&self) -> anyhow::Result<String> {
-        let utf8 = cobs::decode_vec(self.0.as_bytes())?;
-        Ok(String::from_utf8(utf8)?)
+impl Connection {
+    fn new(stream: TcpStream, peer_addr: SocketAddr, noise: Option<secure::Noise>) -> Self {
+        let (read, writer) = stream.into_split();
+        Self {
+            reader: tokio::io::BufReader::new(read),
+            writer,
+            peer_addr,
+            noise,
+            read_buf: Vec::new(),
+            cobs_buf: Vec::new(),
+        }
     }
 
-    // Assumes non-empty clipboard
-    pub fn encode(clipboard: &str) -> Self {
-        let mut bytes = cobs::encode_vec(clipboard.as_bytes());
-        bytes.push(0);
-        Self(CString::from_vec_with_nul(bytes).unwrap())
+    /// Assumes `clipboard` is non-empty
+    pub async fn send(&mut self, clipboard: &str) -> anyhow::Result<()> {
+        let to_encode = if let Some(n) = self.noise.as_mut() {
+            n.encode_message(clipboard)?
+        } else {
+            clipboard.as_bytes()
+        };
+        self.cobs_buf
+            .resize(cobs::max_encoding_length(to_encode.len()), 0);
+        let encoded_len = cobs::encode(to_encode, &mut self.cobs_buf);
+        self.cobs_buf.truncate(encoded_len);
+        self.cobs_buf.push(0);
+        self.writer.write_all(self.cobs_buf.as_slice()).await?;
+        Ok(())
     }
 
-    pub fn as_bytes_with_nul(&self) -> &[u8] {
-        self.0.as_bytes_with_nul()
+    pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
+        // This await is cancel-safe which means the whole method is... don't add any more awaits without
+        // thinking about it
+        let bytes_read = self.reader.read_until(0, &mut self.read_buf).await?;
+        if bytes_read == 0 {
+            return Ok(ReadResult::Eof);
+        } else if self.read_buf.last().copied() != Some(0) {
+            debug!(%self.peer_addr, "Mid-way through receiving incomplete message. This read: {bytes_read}, total: {} bytes", self.read_buf.len());
+            return Ok(ReadResult::Incomplete);
+        }
+
+        self.read_buf.pop();
+        let len = cobs::decode_in_place(&mut self.read_buf)?;
+        self.read_buf.truncate(len);
+        let to_decode = if let Some(n) = self.noise.as_mut() {
+            n.decode_message(&self.read_buf)?
+        } else {
+            &self.read_buf
+        };
+        let result = String::from_utf8(to_decode.to_vec())?;
+        self.read_buf.clear();
+
+        Ok(ReadResult::Done(result))
     }
 
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, FromVecWithNulError> {
-        CString::from_vec_with_nul(bytes).map(Self)
+    pub fn peer_addr(&self) -> &SocketAddr {
+        &self.peer_addr
     }
 }
 
-static CLIPBOARD: RwLock<Option<EncodedClipboard>> = RwLock::const_new(None);
+enum ReadResult {
+    Eof,
+    Incomplete,
+    Done(String),
+}
 
-pub async fn run_satellite(addr: SocketAddr, refresh_interval: Duration) -> anyhow::Result<()> {
-    let stream = TcpStream::connect(&addr).await?;
+static CLIPBOARD: RwLock<Option<String>> = RwLock::const_new(None);
+
+pub async fn run_satellite(
+    addr: SocketAddr,
+    refresh_interval: Duration,
+    secret: Option<String>,
+) -> anyhow::Result<()> {
+    let mut stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
+
+    let noise = if let Some(s) = secret.as_deref() {
+        Some(secure::Noise::satellite(&mut stream, s).await?)
+    } else {
+        None
+    };
     info!("Connected to clipboard on {addr}");
+    let connection = Connection::new(stream, addr, noise);
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
-    watch_remote(stream, notify, addr).await?; // Blocks
+    watch_remote(connection, notify).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
 }
 
-pub async fn run_host(refresh_interval: Duration) -> anyhow::Result<()> {
+pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(UNSPECIFIED).await?;
 
     let local_addr = {
@@ -72,13 +136,19 @@ pub async fn run_host(refresh_interval: Duration) -> anyhow::Result<()> {
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
 
     loop {
-        let (stream, client_addr) = listener.accept().await?;
+        let (mut stream, client_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        info!("New client {client_addr} connected");
+        let noise = if let Some(s) = secret.as_deref() {
+            Some(secure::Noise::host(&mut stream, &client_addr, s).await?)
+        } else {
+            None
+        };
+        info!(%client_addr, "New client connected");
+        let connection = Connection::new(stream, client_addr, noise);
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
-            match watch_remote(stream, notify, client_addr).await {
+            match watch_remote(connection, notify).await {
                 Ok(()) => info!("Client {client_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited: {e}"),
             }
@@ -140,69 +210,36 @@ async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Res
     }
 }
 
-async fn watch_remote(
-    mut stream: TcpStream,
-    notify: Arc<Notify>,
-    remote_addr: SocketAddr,
-) -> anyhow::Result<()> {
-    let (read, mut writer) = stream.split();
-    let mut reader = tokio::io::BufReader::new(read);
+async fn watch_remote(mut connection: Connection, notify: Arc<Notify>) -> anyhow::Result<()> {
     let mut clip_ctx = Clipboard::new()?;
 
-    let mut incoming_bytes = Vec::new();
     loop {
-        trace!("{remote_addr}: selecting... (current bytes: {incoming_bytes:?})");
+        trace!("{}: selecting...", connection.peer_addr());
         tokio::select! {
             _notified = notify.notified() => {
                 trace!("Notified of clipboard change");
                 // Someone has updated the clipboard. Send it to our client.
                 let lock = CLIPBOARD.read().await;
                 let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
-                let encoded = EncodedClipboard::encode(new_clip);
                 // We're holding a read lock while we write the bytes into
                 // the buffer (just so we can log them afterwards!)
-                writer.write_all(encoded.as_bytes_with_nul()).await?;
-                debug!("Sent {new_clip:?} to {remote_addr}");
+                connection.send(new_clip).await?;
+                debug!("Sent {new_clip:?} to {}", connection.peer_addr());
                 drop(lock);
-                writer.flush().await?;
             },
-            bytes_read = reader.read_until(0, &mut incoming_bytes) => {
-                let bytes_read = bytes_read?;
-                if bytes_read == 0 {
-                    // EOF
-                    return Ok(());
-                } else if incoming_bytes.last().copied() != Some(0) {
-                    // TODO: Actually implement handshake/encryption so can worry less about malicious messages
-                    warn!(%remote_addr, "Mid-way through receiving incomplete message. This read: {bytes_read}, total: {} bytes", incoming_bytes.len());
-                    continue;
+            result = connection.read() => {
+                match result? {
+                    ReadResult::Done(s) => {
+                        info!("Received new clipboard text: {s}");
+                        clip_ctx.set_text(s.as_str())?;
+                        *CLIPBOARD.write().await = Some(s);
+
+                        // We're not a waiter, so we won't get woken up by our own update later
+                        notify.notify_waiters();
+                    }
+                    ReadResult::Incomplete => continue,
+                    ReadResult::Eof => return Ok(()),
                 }
-
-                let completed_message = incoming_bytes.clone();
-                incoming_bytes.clear();
-
-                let new_clip = match EncodedClipboard::from_bytes(completed_message) {
-                    Ok(c) => {
-                        debug!("Received {c:?} from {remote_addr}");
-                        c
-                    }
-                    Err(e) => {
-                        error!("Incoming clipboard from {remote_addr} was malformed: {e:?}");
-                        continue;
-                    }
-                };
-
-                let decoded = match new_clip.decode() {
-                    Ok(d) => d,
-                    Err(e) => {
-                        error!("Couldn't decode incoming clipboard. What happened? {e}");
-                        continue;
-                    }
-                };
-                clip_ctx.set_text(decoded.as_str())?;
-                *CLIPBOARD.write().await = Some(decoded);
-
-                // We're not a waiter, so we won't get woken up by our own update later
-                notify.notify_waiters();
             },
         }
     }

@@ -8,6 +8,7 @@ anyhow = "1.0.98"
 arboard = "3.5.0"
 clap = { version = "4.5.37", features = ["derive"] }
 cobs = "0.3.0"
+snow = "0.9.6"
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
