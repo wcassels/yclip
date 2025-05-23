@@ -146,8 +146,7 @@ async fn watch_remote(
     notify: Arc<Notify>,
     remote_addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    let (read, write) = stream.split();
-    let mut writer = tokio::io::BufWriter::new(write);
+    let (read, mut writer) = stream.split();
     let mut reader = tokio::io::BufReader::new(read);
     let mut clip_ctx = Clipboard::new()?;
 
