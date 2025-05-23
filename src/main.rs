@@ -43,7 +43,7 @@ struct Options {
     refresh_interval: Duration,
     /// Connect to the yclip server running on this host
     host: Option<SocketAddr>,
-    #[arg(short, long)]
+    #[arg(short, long, required(cfg!(feature = "force-secure")))]
     /// Encrypt clipboards using this secret
     secret: Option<String>,
 }
