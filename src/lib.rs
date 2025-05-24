@@ -128,8 +128,12 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
     };
 
     info!(
-        "Run `yclip {local_addr}:{}` to connect to this clipboard",
-        listener.local_addr()?.port()
+        "Run `yclip {local_addr}:{}{}` to connect to this clipboard",
+        listener.local_addr()?.port(),
+        secret
+            .as_ref()
+            .map(|s| format!(" -s {s}"))
+            .unwrap_or_default()
     );
 
     let notify = Arc::new(Notify::const_new());
