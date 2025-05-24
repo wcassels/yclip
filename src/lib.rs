@@ -155,7 +155,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
         tokio::task::spawn(async move {
             match watch_remote(connection, notify).await {
                 Ok(()) => info!("Client {client_addr} disconnected"),
-                Err(e) => error!("Remote watcher exited: {e}"),
+                Err(e) => error!("Remote watcher exited with an error: {e}"),
             }
         });
     }
@@ -164,7 +164,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
 fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
     tokio::task::spawn(async move {
         if let Err(e) = watch_local(notify, refresh_rate).await {
-            error!("Local watcher exited: {e}");
+            error!("Local watcher exited with an error: {e}");
         }
     });
 }
