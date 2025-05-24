@@ -1,152 +1,21 @@
+use clipboard::Clipboard;
+use connection::{Connection, ReadResult, Transport};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream, UdpSocket,
-    },
+    net::{TcpStream, UdpSocket},
     sync::{Notify, RwLock},
 };
 use tracing::*;
 
+mod clipboard;
+mod connection;
 mod secure;
 
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-
-struct Connection<T: Transport> {
-    reader: T::Reader,
-    writer: T::Writer,
-    peer_addr: String,
-    noise: Option<secure::Noise>,
-    read_buf: Vec<u8>,
-    cobs_buf: Vec<u8>,
-}
-
-trait Transport {
-    type Reader: AsyncBufReadExt + Unpin;
-    type Writer: AsyncWriteExt + Unpin;
-}
-
-impl Transport for TcpStream {
-    type Reader = BufReader<OwnedReadHalf>;
-    type Writer = OwnedWriteHalf;
-}
-
-impl<T: Transport> Connection<T> {
-    /// Assumes `clipboard` is non-empty
-    pub async fn send(&mut self, clipboard: &str) -> anyhow::Result<()> {
-        let to_encode = if let Some(n) = self.noise.as_mut() {
-            n.encode_message(clipboard)?
-        } else {
-            clipboard.as_bytes()
-        };
-        self.cobs_buf
-            .resize(cobs::max_encoding_length(to_encode.len()), 0);
-        let encoded_len = cobs::encode(to_encode, &mut self.cobs_buf);
-        self.cobs_buf.truncate(encoded_len);
-        self.cobs_buf.push(0);
-        self.writer.write_all(self.cobs_buf.as_slice()).await?;
-        Ok(())
-    }
-
-    pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
-        // This await is cancel-safe which means the whole method is... don't add any more awaits without
-        // thinking about it
-        let bytes_read = self.reader.read_until(0, &mut self.read_buf).await?;
-        if bytes_read == 0 {
-            return Ok(ReadResult::Eof);
-        } else if self.read_buf.last().copied() != Some(0) {
-            debug!(%self.peer_addr, "Mid-way through receiving incomplete message. This read: {bytes_read}, total: {} bytes", self.read_buf.len());
-            return Ok(ReadResult::Incomplete);
-        }
-
-        self.read_buf.pop();
-        let len = cobs::decode_in_place(&mut self.read_buf)?;
-        self.read_buf.truncate(len);
-        let to_decode = if let Some(n) = self.noise.as_mut() {
-            n.decode_message(&self.read_buf)?
-        } else {
-            &self.read_buf
-        };
-        let result = String::from_utf8(to_decode.to_vec())?;
-        self.read_buf.clear();
-
-        Ok(ReadResult::Done(result))
-    }
-    pub fn peer_addr(&self) -> &str {
-        &self.peer_addr
-    }
-}
-
-impl Connection<TcpStream> {
-    fn tcp(stream: TcpStream, peer_addr: String, noise: Option<secure::Noise>) -> Self {
-        let (read, writer) = stream.into_split();
-        Self {
-            reader: tokio::io::BufReader::new(read),
-            writer,
-            peer_addr,
-            noise,
-            read_buf: Vec::new(),
-            cobs_buf: Vec::new(),
-        }
-    }
-}
-
-enum ReadResult {
-    Eof,
-    Incomplete,
-    Done(String),
-}
-
-trait Clipboard: Sized + Send {
-    fn new() -> anyhow::Result<Self>;
-    /// Try to set the clipboard text. Should not panic
-    fn set_text(&mut self, text: &str);
-    /// Returns [`None`] if the clipboard was empty/unavailable
-    /// Should only return an error on unrecoverable failures.
-    fn get_text(&mut self) -> anyhow::Result<Option<String>>;
-}
-
-impl Clipboard for arboard::Clipboard {
-    fn new() -> anyhow::Result<Self> {
-        Ok(Self::new()?)
-    }
-    fn set_text(&mut self, text: &str) {
-        if let Err(e) = self.set_text(text) {
-            error!("Couldn't set clipboard text: {e}");
-        }
-    }
-    fn get_text(&mut self) -> anyhow::Result<Option<String>> {
-        use arboard::Error;
-        match self.get_text() {
-            // Don't broadcast clipboard reset!
-            Ok(s) if s.is_empty() => Ok(None),
-            Ok(s) => Ok(Some(s)),
-            // Retry
-            Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
-            // For text, this means non-utf8 AFAICT.
-            Err(Error::ConversionFailure) => {
-                warn!("Clipboard conversion failure. Does the clipboard contain non-utf8 text?");
-                Ok(None)
-            }
-            Err(Error::Unknown { description }) => {
-                warn!("Error reading clipboard: {description}");
-                // Retry? From a quick look at the library's source, these errors seem
-                // transient
-                Ok(None)
-            }
-            // No point retrying on this
-            Err(e @ Error::ClipboardNotSupported) => Err(e.into()),
-            // arboard::Error is marked as non_exhastive so we need a catch-all;
-            // just fall over.
-            Err(e) => Err(e.into()),
-        }
-    }
-}
 
 static CLIPBOARD: RwLock<Option<String>> = RwLock::const_new(None);
 
