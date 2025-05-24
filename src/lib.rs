@@ -37,7 +37,7 @@ pub async fn run_satellite(
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    watch_remote::<TcpStream, arboard::Clipboard>(connection, notify).await?; // Blocks
+    watch_remote::<_, arboard::Clipboard>(connection, notify).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
