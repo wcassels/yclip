@@ -17,28 +17,26 @@ mod secure;
 
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
-struct Connection {
-    reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
-    peer_addr: SocketAddr,
+struct Connection<T: Transport> {
+    reader: T::Reader,
+    writer: T::Writer,
+    peer_addr: String,
     noise: Option<secure::Noise>,
     read_buf: Vec<u8>,
     cobs_buf: Vec<u8>,
 }
 
-impl Connection {
-    fn new(stream: TcpStream, peer_addr: SocketAddr, noise: Option<secure::Noise>) -> Self {
-        let (read, writer) = stream.into_split();
-        Self {
-            reader: tokio::io::BufReader::new(read),
-            writer,
-            peer_addr,
-            noise,
-            read_buf: Vec::new(),
-            cobs_buf: Vec::new(),
-        }
-    }
+trait Transport {
+    type Reader: AsyncBufReadExt + Unpin;
+    type Writer: AsyncWriteExt + Unpin;
+}
 
+impl Transport for TcpStream {
+    type Reader = BufReader<OwnedReadHalf>;
+    type Writer = OwnedWriteHalf;
+}
+
+impl<T: Transport> Connection<T> {
     /// Assumes `clipboard` is non-empty
     pub async fn send(&mut self, clipboard: &str) -> anyhow::Result<()> {
         let to_encode = if let Some(n) = self.noise.as_mut() {
@@ -79,9 +77,22 @@ impl Connection {
 
         Ok(ReadResult::Done(result))
     }
-
-    pub fn peer_addr(&self) -> &SocketAddr {
+    pub fn peer_addr(&self) -> &str {
         &self.peer_addr
+    }
+}
+
+impl Connection<TcpStream> {
+    fn tcp(stream: TcpStream, peer_addr: String, noise: Option<secure::Noise>) -> Self {
+        let (read, writer) = stream.into_split();
+        Self {
+            reader: tokio::io::BufReader::new(read),
+            writer,
+            peer_addr,
+            noise,
+            read_buf: Vec::new(),
+            cobs_buf: Vec::new(),
+        }
     }
 }
 
@@ -153,11 +164,11 @@ pub async fn run_satellite(
         None
     };
     info!("Connected to clipboard on {addr}");
-    let connection = Connection::new(stream, addr, noise);
+    let connection = Connection::tcp(stream, addr.to_string(), noise);
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    watch_remote::<arboard::Clipboard>(connection, notify).await?; // Blocks
+    watch_remote::<TcpStream, arboard::Clipboard>(connection, notify).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
@@ -194,11 +205,11 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
             None
         };
         info!(%client_addr, "New client connected");
-        let connection = Connection::new(stream, client_addr, noise);
+        let connection = Connection::tcp(stream, client_addr.to_string(), noise);
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
-            match watch_remote::<arboard::Clipboard>(connection, notify).await {
+            match watch_remote::<_, arboard::Clipboard>(connection, notify).await {
                 Ok(()) => info!("Client {client_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited with an error: {e}"),
             }
@@ -235,10 +246,14 @@ async fn watch_local<C: Clipboard>(
     }
 }
 
-async fn watch_remote<C: Clipboard>(
-    mut connection: Connection,
+async fn watch_remote<T, C>(
+    mut connection: Connection<T>,
     notify: Arc<Notify>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    T: Transport,
+    C: Clipboard,
+{
     let mut clipboard = C::new()?;
     loop {
         trace!("{}: selecting...", connection.peer_addr());
