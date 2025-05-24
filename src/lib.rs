@@ -16,7 +16,7 @@ use tracing::*;
 
 mod secure;
 
-pub const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 struct Connection {
     reader: BufReader<OwnedReadHalf>,
