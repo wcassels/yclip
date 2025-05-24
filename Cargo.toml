@@ -6,8 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.98"
 arboard = "3.5.0"
+argon2 = "0.5.3"
 clap = { version = "4.5.37", features = ["derive"] }
 cobs = "0.3.0"
+rand = "0.9.1"
 snow = "0.9.6"
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"

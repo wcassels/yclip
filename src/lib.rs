@@ -102,7 +102,7 @@ pub async fn run_satellite(
     let mut stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
 
-    let noise = if let Some(s) = secret.as_deref() {
+    let noise = if let Some(s) = secret {
         Some(secure::Noise::satellite(&mut stream, s).await?)
     } else {
         None
@@ -138,11 +138,12 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher(Arc::clone(&notify), refresh_interval);
+    let secret = secret.map(|s| secure::Secret::new(s, None));
 
     loop {
         let (mut stream, client_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        let noise = if let Some(s) = secret.as_deref() {
+        let noise = if let Some(s) = secret.as_ref() {
             Some(secure::Noise::host(&mut stream, &client_addr, s).await?)
         } else {
             None

@@ -1,3 +1,4 @@
+use rand::Rng;
 use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
 use std::{
     io::{self},
@@ -13,18 +14,6 @@ use tracing::*;
 static PARAMS: LazyLock<NoiseParams> =
     LazyLock::new(|| "Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
 
-// workflow 1:
-// a: handshake.write_message (encrypt) &str clipboard into buf1
-// b: cobs::encode that into buf2
-// c: push 0
-// d: write_all into TcpStream
-// e: clear
-
-// workflow 2:
-// a: read until 0 into buf1 (what about partial?)
-// b: cobs decode in place, pop 0
-// c: handshake.read_message into buf2
-
 pub struct Noise {
     transport: TransportState,
     buf: Vec<u8>,
@@ -34,12 +23,15 @@ impl Noise {
     pub async fn host(
         stream: &mut TcpStream,
         client_addr: &SocketAddr,
-        secret: &str,
+        secret: &Secret,
     ) -> anyhow::Result<Self> {
-        let mut buf = vec![0; 65536];
-        let mut handshake = Self::init_handshake(secret, false)?;
-
         debug!(%client_addr, "New connection, starting secure handshake");
+        let mut buf = vec![0; 65536];
+
+        Self::handshake_send(stream, secret.salt()).await?;
+
+        let mut handshake = Self::init_handshake(secret.hash(), false)?;
+
         handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
@@ -52,11 +44,13 @@ impl Noise {
         })
     }
 
-    pub async fn satellite(stream: &mut TcpStream, secret: &str) -> anyhow::Result<Self> {
+    pub async fn satellite(stream: &mut TcpStream, secret: String) -> anyhow::Result<Self> {
         let mut buf = vec![0; 65536];
-        let mut handshake = Self::init_handshake(secret, true)?;
-
         debug!("Established connection, starting secure handshake");
+        let salt: [u8; 32] = Self::handshake_recv(stream).await?.try_into().unwrap();
+        let secret = Secret::new(secret, Some(salt));
+        let mut handshake = Self::init_handshake(secret.hash(), true)?;
+
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
         handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
@@ -82,14 +76,10 @@ impl Noise {
         Ok(&self.buf[..len])
     }
 
-    fn init_handshake(secret: &str, initiator: bool) -> anyhow::Result<HandshakeState> {
-        const PSK_LEN: usize = 32;
-        let secret: Vec<u8> = secret.bytes().cycle().take(PSK_LEN).collect();
+    fn init_handshake(hash: &[u8; 32], initiator: bool) -> anyhow::Result<HandshakeState> {
         let builder = Builder::new(PARAMS.clone());
         let static_key = builder.generate_keypair().unwrap().private;
-        let builder = builder
-            .local_private_key(&static_key)
-            .psk(3, secret.as_slice());
+        let builder = builder.local_private_key(&static_key).psk(3, hash);
         if initiator {
             Ok(builder.build_initiator()?)
         } else {
@@ -111,5 +101,28 @@ impl Noise {
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(buf).await?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Secret {
+    hash: [u8; 32],
+    salt: [u8; 32],
+}
+
+impl Secret {
+    pub fn new(password: String, salt: Option<[u8; 32]>) -> Self {
+        let salt: [u8; 32] = salt.unwrap_or_else(|| rand::rng().random());
+        let mut hash = [0; 32];
+        argon2::Argon2::default()
+            .hash_password_into(password.as_bytes(), salt.as_slice(), &mut hash)
+            .unwrap();
+        Self { hash, salt }
+    }
+    pub fn hash(&self) -> &[u8; 32] {
+        &self.hash
+    }
+    pub fn salt(&self) -> &[u8; 32] {
+        &self.salt
     }
 }
