@@ -57,9 +57,9 @@ impl Noise {
         let mut handshake = Self::init_handshake(secret, true)?;
 
         debug!("Established connection, starting secure handshake");
-        let len = handshake.write_message(&[], &mut buf)?; // encrypt
+        let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
-        handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?; // decrypt
+        handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
         debug!("Handshake complete!");
@@ -95,10 +95,8 @@ impl Noise {
         } else {
             Ok(builder.build_responder()?)
         }
-
-        // Ok()
-        //     .build_responder()?)
     }
+
     async fn handshake_recv(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
         let mut msg_len_buf = [0_u8; 2];
         stream.read_exact(&mut msg_len_buf).await?;
