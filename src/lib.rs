@@ -1,4 +1,3 @@
-use arboard::Clipboard;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -92,6 +91,52 @@ enum ReadResult {
     Done(String),
 }
 
+trait Clipboard: Sized + Send {
+    fn new() -> anyhow::Result<Self>;
+    /// Try to set the clipboard text. Should not panic
+    fn set_text(&mut self, text: &str);
+    /// Returns [`None`] if the clipboard was empty/unavailable
+    /// Should only return an error on unrecoverable failures.
+    fn get_text(&mut self) -> anyhow::Result<Option<String>>;
+}
+
+impl Clipboard for arboard::Clipboard {
+    fn new() -> anyhow::Result<Self> {
+        Ok(Self::new()?)
+    }
+    fn set_text(&mut self, text: &str) {
+        if let Err(e) = self.set_text(text) {
+            error!("Couldn't set clipboard text: {e}");
+        }
+    }
+    fn get_text(&mut self) -> anyhow::Result<Option<String>> {
+        use arboard::Error;
+        match self.get_text() {
+            // Don't broadcast clipboard reset!
+            Ok(s) if s.is_empty() => Ok(None),
+            Ok(s) => Ok(Some(s)),
+            // Retry
+            Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
+            // For text, this means non-utf8 AFAICT.
+            Err(Error::ConversionFailure) => {
+                warn!("Clipboard conversion failure. Does the clipboard contain non-utf8 text?");
+                Ok(None)
+            }
+            Err(Error::Unknown { description }) => {
+                warn!("Error reading clipboard: {description}");
+                // Retry? From a quick look at the library's source, these errors seem
+                // transient
+                Ok(None)
+            }
+            // No point retrying on this
+            Err(e @ Error::ClipboardNotSupported) => Err(e.into()),
+            // arboard::Error is marked as non_exhastive so we need a catch-all;
+            // just fall over.
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
 static CLIPBOARD: RwLock<Option<String>> = RwLock::const_new(None);
 
 pub async fn run_satellite(
@@ -111,8 +156,8 @@ pub async fn run_satellite(
     let connection = Connection::new(stream, addr, noise);
 
     let notify = Arc::new(Notify::const_new());
-    spawn_local_watcher(Arc::clone(&notify), refresh_interval);
-    watch_remote(connection, notify).await?; // Blocks
+    spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
+    watch_remote::<arboard::Clipboard>(connection, notify).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
@@ -137,7 +182,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
     );
 
     let notify = Arc::new(Notify::const_new());
-    spawn_local_watcher(Arc::clone(&notify), refresh_interval);
+    spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
     let secret = secret.map(|s| secure::Secret::new(s, None));
 
     loop {
@@ -153,7 +198,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
-            match watch_remote(connection, notify).await {
+            match watch_remote::<arboard::Clipboard>(connection, notify).await {
                 Ok(()) => info!("Client {client_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited with an error: {e}"),
             }
@@ -161,63 +206,40 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
     }
 }
 
-fn spawn_local_watcher(notify: Arc<Notify>, refresh_rate: Duration) {
+fn spawn_local_watcher<C: Clipboard>(notify: Arc<Notify>, refresh_rate: Duration) {
     tokio::task::spawn(async move {
-        if let Err(e) = watch_local(notify, refresh_rate).await {
+        if let Err(e) = watch_local::<C>(notify, refresh_rate).await {
             error!("Local watcher exited with an error: {e}");
         }
     });
 }
 
-async fn watch_local(notify: Arc<Notify>, refresh_rate: Duration) -> anyhow::Result<()> {
-    let mut ctx = Clipboard::new()?;
-
-    let mut get_text = || -> anyhow::Result<Option<String>> {
-        use arboard::Error;
-        match ctx.get_text() {
-            // Don't broadcast clipboard reset!
-            Ok(s) if s.is_empty() => Ok(None),
-            Ok(s) => Ok(Some(s)),
-            // Retry
-            Err(Error::ContentNotAvailable | Error::ClipboardOccupied) => Ok(None),
-            // For text, this means non-utf8 AFAICT.
-            Err(Error::ConversionFailure) => {
-                warn!("Clipboard conversion failure. Does the clipboard contain non-utf8 text?");
-                Ok(None)
-            }
-            Err(Error::Unknown { description }) => {
-                warn!("Error reading clipboard: {description}");
-                // Retry? From a quick look at the library's source, these errors seem
-                // transient
-                Ok(None)
-            }
-            // No point retrying on this
-            Err(e @ Error::ClipboardNotSupported) => Err(e.into()),
-            // arboard::Error is marked as non_exhastive so we need a catch-all;
-            // just fall over.
-            Err(e) => Err(e.into()),
-        }
-    };
-
-    *CLIPBOARD.write().await = get_text()?;
+async fn watch_local<C: Clipboard>(
+    notify: Arc<Notify>,
+    refresh_rate: Duration,
+) -> anyhow::Result<()> {
+    let mut clipboard = C::new()?;
+    *CLIPBOARD.write().await = clipboard.get_text()?;
 
     loop {
         tokio::time::sleep(refresh_rate).await;
-        let Some(new_clip) = get_text()? else {
+        let Some(new_text) = clipboard.get_text()? else {
             continue;
         };
 
-        if CLIPBOARD.read().await.as_ref() != Some(&new_clip) {
-            debug!("Local clipboard change: {new_clip:?}");
-            *CLIPBOARD.write().await = Some(new_clip);
+        if CLIPBOARD.read().await.as_ref() != Some(&new_text) {
+            debug!("Local clipboard change: {new_text}");
+            *CLIPBOARD.write().await = Some(new_text);
             notify.notify_waiters();
         }
     }
 }
 
-async fn watch_remote(mut connection: Connection, notify: Arc<Notify>) -> anyhow::Result<()> {
-    let mut clip_ctx = Clipboard::new()?;
-
+async fn watch_remote<C: Clipboard>(
+    mut connection: Connection,
+    notify: Arc<Notify>,
+) -> anyhow::Result<()> {
+    let mut clipboard = C::new()?;
     loop {
         trace!("{}: selecting...", connection.peer_addr());
         tokio::select! {
@@ -236,7 +258,7 @@ async fn watch_remote(mut connection: Connection, notify: Arc<Notify>) -> anyhow
                 match result? {
                     ReadResult::Done(s) => {
                         info!("Received new clipboard text: {s}");
-                        clip_ctx.set_text(s.as_str())?;
+                        clipboard.set_text(s.as_str());
                         *CLIPBOARD.write().await = Some(s);
 
                         // We're not a waiter, so we won't get woken up by our own update later
