@@ -1,11 +1,13 @@
-use clipboard::Clipboard;
-use connection::{Connection, ReadResult, Transport};
+pub use clipboard::Clipboard;
+pub use connection::Connection;
+use connection::ReadResult;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::{TcpStream, UdpSocket},
     sync::{Notify, RwLock},
 };
@@ -33,7 +35,7 @@ pub async fn run_satellite(
         None
     };
     info!("Connected to clipboard on {addr}");
-    let connection = Connection::tcp(stream, addr.to_string(), noise);
+    let connection = Connection::new(stream, addr.to_string(), noise);
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
@@ -74,7 +76,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
             None
         };
         info!(%client_addr, "New client connected");
-        let connection = Connection::tcp(stream, client_addr.to_string(), noise);
+        let connection = Connection::new(stream, client_addr.to_string(), noise);
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
@@ -94,7 +96,7 @@ fn spawn_local_watcher<C: Clipboard>(notify: Arc<Notify>, refresh_rate: Duration
     });
 }
 
-async fn watch_local<C: Clipboard>(
+pub async fn watch_local<C: Clipboard>(
     notify: Arc<Notify>,
     refresh_rate: Duration,
 ) -> anyhow::Result<()> {
@@ -115,12 +117,11 @@ async fn watch_local<C: Clipboard>(
     }
 }
 
-async fn watch_remote<T, C>(
+pub async fn watch_remote<T: AsyncRead + AsyncWrite, C>(
     mut connection: Connection<T>,
     notify: Arc<Notify>,
 ) -> anyhow::Result<()>
 where
-    T: Transport,
     C: Clipboard,
 {
     let mut clipboard = C::new()?;

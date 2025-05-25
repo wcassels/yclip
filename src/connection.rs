@@ -1,32 +1,30 @@
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
+use crate::secure::Noise;
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadHalf, WriteHalf,
 };
 use tracing::*;
 
-pub struct Connection<T: Transport> {
-    reader: T::Reader,
-    writer: T::Writer,
+pub struct Connection<T> {
+    reader: BufReader<ReadHalf<T>>,
+    writer: WriteHalf<T>,
     peer_addr: String,
-    noise: Option<crate::secure::Noise>,
+    noise: Option<Noise>,
     read_buf: Vec<u8>,
     cobs_buf: Vec<u8>,
 }
 
-pub trait Transport {
-    type Reader: AsyncBufReadExt + Unpin;
-    type Writer: AsyncWriteExt + Unpin;
-}
-
-impl Transport for TcpStream {
-    type Reader = BufReader<OwnedReadHalf>;
-    type Writer = OwnedWriteHalf;
-}
-
-impl<T: Transport> Connection<T> {
+impl<T: AsyncRead + AsyncWrite> Connection<T> {
+    pub fn new(transport: T, peer_addr: String, noise: Option<Noise>) -> Self {
+        let (reader, writer) = tokio::io::split(transport);
+        Self {
+            reader: BufReader::new(reader),
+            writer,
+            peer_addr,
+            noise,
+            read_buf: Vec::new(),
+            cobs_buf: Vec::new(),
+        }
+    }
     /// Assumes `clipboard` is non-empty
     pub async fn send(&mut self, clipboard: &str) -> anyhow::Result<()> {
         let to_encode = if let Some(n) = self.noise.as_mut() {
@@ -69,20 +67,6 @@ impl<T: Transport> Connection<T> {
     }
     pub fn peer_addr(&self) -> &str {
         &self.peer_addr
-    }
-}
-
-impl Connection<TcpStream> {
-    pub fn tcp(stream: TcpStream, peer_addr: String, noise: Option<crate::secure::Noise>) -> Self {
-        let (read, writer) = stream.into_split();
-        Self {
-            reader: tokio::io::BufReader::new(read),
-            writer,
-            peer_addr,
-            noise,
-            read_buf: Vec::new(),
-            cobs_buf: Vec::new(),
-        }
     }
 }
 
