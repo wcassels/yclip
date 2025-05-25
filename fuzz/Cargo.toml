@@ -1,0 +1,30 @@
+[package]
+name = "yclip-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+anyhow = "1.0.98"
+tokio = { version = "1.44.2", features = ["full"] }
+
+[dependencies.yclip]
+path = ".."
+
+[[bin]]
+name = "fuzz_target_1"
+path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "local"
+path = "fuzz_targets/local.rs"
+test = false
+doc = false
+bench = false
