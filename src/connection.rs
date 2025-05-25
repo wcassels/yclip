@@ -27,6 +27,10 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     }
     /// Assumes `clipboard` is non-empty
     pub async fn send(&mut self, clipboard: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !clipboard.is_empty(),
+            "Logic bug! Shouldn't be trying to send an empty clipboard"
+        );
         let to_encode = if let Some(n) = self.noise.as_mut() {
             n.encode_message(clipboard)?
         } else {
