@@ -1,6 +1,7 @@
 pub use clipboard::Clipboard;
 pub use connection::Connection;
 use connection::ReadResult;
+use secure::Noise;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -68,20 +69,27 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
     let secret = secret.map(|s| secure::Secret::new(s, None));
 
     loop {
-        let (mut stream, client_addr) = listener.accept().await?;
+        let (mut stream, peer_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
         let noise = if let Some(s) = secret.as_ref() {
-            Some(secure::Noise::host(&mut stream, &client_addr, s).await?)
+            match Noise::host(&mut stream, &peer_addr, s).await {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    error!("Failed handshake with {peer_addr}: {e}");
+                    continue;
+                }
+            }
         } else {
             None
         };
-        info!(%client_addr, "New client connected");
-        let connection = Connection::new(stream, client_addr.to_string(), noise);
+
+        info!("New client {peer_addr} connected");
+        let connection = Connection::new(stream, peer_addr.to_string(), noise);
         let notify = Arc::clone(&notify);
 
         tokio::task::spawn(async move {
             match watch_remote::<_, arboard::Clipboard>(connection, notify).await {
-                Ok(()) => info!("Client {client_addr} disconnected"),
+                Ok(()) => info!("Client {peer_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited with an error: {e}"),
             }
         });
