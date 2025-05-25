@@ -11,8 +11,11 @@ use tokio::{
 };
 use tracing::*;
 
+// In NN0, the psk immediately gets mixed into the chaining key.
+// -> psk, e
+// <- e, ee
 static PARAMS: LazyLock<NoiseParams> =
-    LazyLock::new(|| "Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
+    LazyLock::new(|| "Noise_NNpsk0_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
 
 pub struct Noise {
     transport: TransportState,
@@ -35,7 +38,6 @@ impl Noise {
         handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
-        handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
         debug!(%client_addr, "Handshake complete");
 
         Ok(Self {
@@ -44,7 +46,7 @@ impl Noise {
         })
     }
 
-    pub async fn satellite(stream: &mut TcpStream, secret: String) -> anyhow::Result<Self> {
+    pub async fn satellite(stream: &mut TcpStream, secret: String) -> Result<Self, HandshakeError> {
         let mut buf = vec![0; 65536];
         debug!("Established connection, starting secure handshake");
         let salt: [u8; 32] = Self::handshake_recv(stream).await?.try_into().unwrap();
@@ -54,8 +56,6 @@ impl Noise {
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
         handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
-        let len = handshake.write_message(&[], &mut buf)?;
-        Self::handshake_send(stream, &buf[..len]).await?;
         debug!("Handshake complete!");
 
         Ok(Self {
@@ -77,9 +77,7 @@ impl Noise {
     }
 
     fn init_handshake(hash: &[u8; 32], initiator: bool) -> anyhow::Result<HandshakeState> {
-        let builder = Builder::new(PARAMS.clone());
-        let static_key = builder.generate_keypair().unwrap().private;
-        let builder = builder.local_private_key(&static_key).psk(3, hash);
+        let builder = Builder::new(PARAMS.clone()).psk(0, hash);
         if initiator {
             Ok(builder.build_initiator()?)
         } else {
