@@ -1,6 +1,6 @@
 # yclip
 
-`yclip` implements a client-server model for sharing clipboard text. Run `yclip` on one machine, and it will log a command in the form `yclip <socket addr>` that you can use to connect. Note that `yclip` understands hostnames too, as well as IPs.
+`yclip` implements a client-server model for sharing clipboard text. Invoking `yclip` starts a server locally; it'll log a command in the form `yclip <socket addr>` that you can run to connect from another machine on the network. Note that `yclip` understands hostnames too, as well as IPs.
 
 Run `yclip --help` for the options: 
 ```
@@ -13,7 +13,8 @@ Options:
   -r, --refresh-interval <REFRESH_INTERVAL>
           Local clipboard check interval (ms) [default: 200]
   -s, --secret <SECRET>
-          Encrypt clipboards using this secret. Compile with the "force-secure" feature enabled to make encryption mandatory
+          Encrypt clipboards using this secret. Compile with the "force-secure" feature
+          enabled to make encryption mandatory
   -v, --verbose...
           Increase verbosity (defaults to INFO and above)
   -h, --help
@@ -32,4 +33,4 @@ Options:
 
 ## Fuzzing
 
-I've implemented a simple fuzzer that you can run using `cargo +nightly fuzz run local` (this requires a nightly release of Cargo).
+I've implemented a fuzzer that simulates a client and a server communicating via an in-memory channel. To test it out, run `cargo +nightly fuzz run --release local` (this requires a nightly release of Cargo).
