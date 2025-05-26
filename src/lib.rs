@@ -1,7 +1,7 @@
 pub use clipboard::Clipboard;
 pub use connection::Connection;
 use connection::ReadResult;
-use secure::Noise;
+pub use secure::{Noise, Secret};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -12,6 +12,7 @@ use tokio::{
     net::{TcpStream, UdpSocket},
     sync::{Notify, RwLock},
 };
+pub use tracing;
 use tracing::*;
 
 mod clipboard;
@@ -30,7 +31,7 @@ pub async fn run_satellite(
     let mut stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
 
-    let noise = if let Some(s) = secret {
+    let noise = if let Some(s) = secret.as_deref() {
         match secure::Noise::satellite(&mut stream, s).await {
             Ok(n) => Some(n),
             Err(e) if e.is_likely_password_mismatch() => {
@@ -74,7 +75,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    let secret = secret.map(|s| secure::Secret::new(s, None));
+    let secret = secret.as_deref().map(|s| Secret::new(s, None));
 
     loop {
         let (mut stream, peer_addr) = listener.accept().await?;
@@ -158,6 +159,7 @@ where
                 drop(lock);
             },
             result = connection.read() => {
+                trace!("Read {:?}", result);
                 match result? {
                     ReadResult::Done(s) => {
                         debug!("Received new clipboard text: {s}");
@@ -173,4 +175,17 @@ where
             },
         }
     }
+}
+
+pub fn init_logging(level: Level) -> anyhow::Result<()> {
+    use tracing_subscriber::prelude::*;
+
+    let subscriber = tracing_subscriber::registry();
+    let filter = tracing_subscriber::filter::LevelFilter::from_level(level);
+    let subscriber = subscriber.with(filter);
+
+    let layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let subscriber = subscriber.with(layer);
+    subscriber.init();
+    Ok(())
 }

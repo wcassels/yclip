@@ -1518,6 +1518,7 @@ dependencies = [
  "cobs",
  "rand",
  "snow",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

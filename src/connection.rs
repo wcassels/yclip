@@ -75,6 +75,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     }
 }
 
+#[derive(Debug)]
 pub enum ReadResult {
     Eof,
     Incomplete,

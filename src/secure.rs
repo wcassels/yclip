@@ -64,7 +64,7 @@ impl Noise {
         })
     }
 
-    pub async fn satellite<I>(stream: &mut I, secret: String) -> Result<Self, HandshakeError>
+    pub async fn satellite<I>(stream: &mut I, secret: &str) -> Result<Self, HandshakeError>
     where
         I: AsyncRead + AsyncWrite + Unpin,
     {
@@ -130,7 +130,7 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn new(password: String, salt: Option<[u8; 32]>) -> Self {
+    pub fn new(password: &str, salt: Option<[u8; 32]>) -> Self {
         let salt: [u8; 32] = salt.unwrap_or_else(|| rand::rng().random());
         let mut hash = [0; 32];
         argon2::Argon2::default()

@@ -4,7 +4,12 @@ use std::{net::SocketAddr, time::Duration};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opts = Options::parse();
-    init_logging(&opts)?;
+    yclip::init_logging(match opts.verbose {
+        0 => tracing::Level::INFO,
+        1 => tracing::Level::DEBUG,
+        2 => tracing::Level::TRACE,
+        _ => anyhow::bail!("Maximum supported verbosity is TRACE (-vv)"),
+    })?;
 
     let res = if let Some(addr) = opts.socket {
         yclip::run_satellite(addr, opts.refresh_interval, opts.secret).await
@@ -17,27 +22,6 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    Ok(())
-}
-
-fn init_logging(opts: &Options) -> anyhow::Result<()> {
-    use tracing::Level;
-    use tracing_subscriber::prelude::*;
-
-    let level = match opts.verbose {
-        0 => Level::INFO,
-        1 => Level::DEBUG,
-        2 => Level::TRACE,
-        _ => anyhow::bail!("Maximum supported verbosity is TRACE (-vv)"),
-    };
-
-    let subscriber = tracing_subscriber::registry();
-    let filter = tracing_subscriber::filter::LevelFilter::from_level(level);
-    let subscriber = subscriber.with(filter);
-
-    let layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
-    let subscriber = subscriber.with(layer);
-    subscriber.init();
     Ok(())
 }
 
