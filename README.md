@@ -1,13 +1,13 @@
 # yclip
 
-`yclip` implements a client-server model for sharing clipboard text. Run `yclip` on one machine, and it will log a command in the form `yclip <ip>:<port>` that you can use to connect. Note that `yclip` understands hostnames too, as well as IPs.
+`yclip` implements a client-server model for sharing clipboard text. Run `yclip` on one machine, and it will log a command in the form `yclip <socket addr>` that you can use to connect. Note that `yclip` understands hostnames too, as well as IPs.
 
 Run `yclip --help` for the options: 
 ```
-Usage: yclip [OPTIONS] [HOST]
+Usage: yclip [OPTIONS] [SOCKET]
 
 Arguments:
-  [HOST]  Connect to the yclip server running on this host
+  [SOCKET]  Connect to the yclip server running on this socket address
 
 Options:
   -r, --refresh-interval <REFRESH_INTERVAL>

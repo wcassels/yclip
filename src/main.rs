@@ -6,7 +6,7 @@ async fn main() -> anyhow::Result<()> {
     let opts = Options::parse();
     init_logging(&opts)?;
 
-    let res = if let Some(addr) = opts.host {
+    let res = if let Some(addr) = opts.socket {
         yclip::run_satellite(addr, opts.refresh_interval, opts.secret).await
     } else {
         yclip::run_host(opts.refresh_interval, opts.secret).await
@@ -47,8 +47,8 @@ struct Options {
     /// Local clipboard check interval (ms)
     #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
     refresh_interval: Duration,
-    /// Connect to the yclip server running on this host
-    host: Option<SocketAddr>,
+    /// Connect to the yclip server running on this socket address
+    socket: Option<SocketAddr>,
     #[arg(short, long, required(cfg!(feature = "force-secure")))]
     /// Encrypt clipboards using this secret. Compile with the "force-secure" feature enabled
     /// to make encryption mandatory.
