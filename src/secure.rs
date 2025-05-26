@@ -5,10 +5,7 @@ use std::{
     net::SocketAddr,
     sync::LazyLock,
 };
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::TcpStream,
-};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tracing::*;
 
 // In NN0, the psk immediately gets mixed into the chaining key.
@@ -41,11 +38,14 @@ impl HandshakeError {
 }
 
 impl Noise {
-    pub async fn host(
-        stream: &mut TcpStream,
+    pub async fn host<I>(
+        stream: &mut I,
         client_addr: &SocketAddr,
         secret: &Secret,
-    ) -> Result<Self, HandshakeError> {
+    ) -> Result<Self, HandshakeError>
+    where
+        I: AsyncRead + AsyncWrite + Unpin,
+    {
         debug!(%client_addr, "New connection, starting secure handshake");
         let mut buf = vec![0; 65536];
 
@@ -64,7 +64,10 @@ impl Noise {
         })
     }
 
-    pub async fn satellite(stream: &mut TcpStream, secret: String) -> Result<Self, HandshakeError> {
+    pub async fn satellite<I>(stream: &mut I, secret: String) -> Result<Self, HandshakeError>
+    where
+        I: AsyncRead + AsyncWrite + Unpin,
+    {
         let mut buf = vec![0; 65536];
         debug!("Established connection, starting secure handshake");
         let salt: [u8; 32] = Self::handshake_recv(stream).await?.try_into().unwrap();
@@ -103,7 +106,7 @@ impl Noise {
         }
     }
 
-    async fn handshake_recv(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+    async fn handshake_recv<I: AsyncRead + Unpin>(stream: &mut I) -> io::Result<Vec<u8>> {
         let mut msg_len_buf = [0_u8; 2];
         stream.read_exact(&mut msg_len_buf).await?;
         let msg_len = usize::from(u16::from_be_bytes(msg_len_buf));
@@ -112,7 +115,7 @@ impl Noise {
         Ok(msg)
     }
 
-    async fn handshake_send(stream: &mut TcpStream, buf: &[u8]) -> io::Result<()> {
+    async fn handshake_send<I: AsyncWrite + Unpin>(stream: &mut I, buf: &[u8]) -> io::Result<()> {
         let len = u16::try_from(buf.len()).unwrap();
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(buf).await?;
