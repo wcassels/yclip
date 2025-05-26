@@ -12,9 +12,9 @@ async fn main() -> anyhow::Result<()> {
     })?;
 
     let res = if let Some(addr) = opts.socket {
-        yclip::run_satellite(addr, opts.refresh_interval, opts.secret).await
+        yclip::run_satellite(addr, opts.refresh_interval, opts.password).await
     } else {
-        yclip::run_host(opts.refresh_interval, opts.secret).await
+        yclip::run_host(opts.refresh_interval, opts.password).await
     };
 
     if let Err(e) = res {
@@ -34,9 +34,9 @@ struct Options {
     /// Connect to the yclip server running on this socket address
     socket: Option<SocketAddr>,
     #[arg(short, long, required(cfg!(feature = "force-secure")))]
-    /// Encrypt clipboards using this secret. Compile with the "force-secure" feature enabled
-    /// to make encryption mandatory.
-    secret: Option<String>,
+    /// Encrypt clipboards using this password. Compile with the "force-secure" feature enabled
+    /// to make this mandatory.
+    password: Option<String>,
     /// Increase verbosity (defaults to INFO and above)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,

@@ -26,13 +26,13 @@ static CLIPBOARD: RwLock<Option<String>> = RwLock::const_new(None);
 pub async fn run_satellite(
     addr: SocketAddr,
     refresh_interval: Duration,
-    secret: Option<String>,
+    password: Option<String>,
 ) -> anyhow::Result<()> {
     let mut stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
 
-    let secret = secret.unwrap_or_default();
-    let noise = match secure::Noise::satellite(&mut stream, secret.as_str()).await {
+    let password = password.unwrap_or_default();
+    let noise = match secure::Noise::satellite(&mut stream, password.as_str()).await {
         Ok(n) => n,
         Err(e) if e.is_likely_password_mismatch() => {
             error!("Handshake failed. Are you sure the passwords match?");
@@ -52,7 +52,7 @@ pub async fn run_satellite(
     Ok(())
 }
 
-pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> anyhow::Result<()> {
+pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(UNSPECIFIED).await?;
 
     let local_addr = {
@@ -64,7 +64,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
     info!(
         "Run `yclip {local_addr}:{}{}` to connect to this clipboard",
         listener.local_addr()?.port(),
-        secret
+        password
             .as_ref()
             .map(|s| format!(" -s {s}"))
             .unwrap_or_default()
@@ -72,7 +72,7 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    let secret = Secret::new(secret.unwrap_or_default().as_str(), None);
+    let secret = Secret::new(password.unwrap_or_default().as_str(), None);
 
     loop {
         let (mut stream, peer_addr) = listener.accept().await?;
