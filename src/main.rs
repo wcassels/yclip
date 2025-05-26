@@ -50,7 +50,8 @@ struct Options {
     /// Connect to the yclip server running on this host
     host: Option<SocketAddr>,
     #[arg(short, long, required(cfg!(feature = "force-secure")))]
-    /// Encrypt clipboards using this secret
+    /// Encrypt clipboards using this secret. Compile with the "force-secure" feature enabled
+    /// to make encryption mandatory.
     secret: Option<String>,
     /// Increase verbosity (defaults to INFO and above)
     #[arg(short, long, action = clap::ArgAction::Count)]
