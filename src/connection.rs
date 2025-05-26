@@ -53,7 +53,11 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         if bytes_read == 0 {
             return Ok(ReadResult::Eof);
         } else if self.read_buf.last().copied() != Some(0) {
-            debug!(%self.peer_addr, "Mid-way through receiving incomplete message. This read: {bytes_read}, total: {} bytes", self.read_buf.len());
+            debug!(
+                "Received incomplete message from {}. This read: {bytes_read}, total: {} bytes",
+                self.peer_addr,
+                self.read_buf.len()
+            );
             return Ok(ReadResult::Incomplete);
         }
 

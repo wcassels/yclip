@@ -46,7 +46,7 @@ impl Noise {
     where
         I: AsyncRead + AsyncWrite + Unpin,
     {
-        debug!(%client_addr, "New connection, starting secure handshake");
+        debug!("New incoming connection from {client_addr}, starting secure handshake...");
         let mut buf = vec![0; 65536];
 
         Self::handshake_send(stream, secret.salt()).await?;
@@ -56,7 +56,7 @@ impl Noise {
         handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
-        debug!(%client_addr, "Handshake complete");
+        debug!("Handshake with {client_addr} complete!");
 
         Ok(Self {
             transport: handshake.into_transport_mode()?,
@@ -69,7 +69,7 @@ impl Noise {
         I: AsyncRead + AsyncWrite + Unpin,
     {
         let mut buf = vec![0; 65536];
-        debug!("Established connection, starting secure handshake");
+        debug!("Established connection, starting secure handshake...");
         let salt: [u8; 32] = Self::handshake_recv(stream).await?.try_into().unwrap();
         let secret = Secret::new(secret, Some(salt));
         let mut handshake = Self::init_handshake(secret.hash(), true)?;
