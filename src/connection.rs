@@ -1,4 +1,5 @@
 use crate::secure::Noise;
+use std::fmt::Display;
 use tokio::io::{
     AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadHalf, WriteHalf,
 };
@@ -14,12 +15,12 @@ pub struct Connection<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite> Connection<T> {
-    pub fn new(transport: T, peer_addr: String, noise: Option<Noise>) -> Self {
+    pub fn new(transport: T, peer_addr: impl Display, noise: Option<Noise>) -> Self {
         let (reader, writer) = tokio::io::split(transport);
         Self {
             reader: BufReader::new(reader),
             writer,
-            peer_addr,
+            peer_addr: peer_addr.to_string(),
             noise,
             read_buf: Vec::new(),
             cobs_buf: Vec::new(),

@@ -1,8 +1,8 @@
 use rand::Rng;
 use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
 use std::{
+    fmt::Display,
     io::{self},
-    net::SocketAddr,
     sync::LazyLock,
 };
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
@@ -40,7 +40,7 @@ impl HandshakeError {
 impl Noise {
     pub async fn host<I>(
         stream: &mut I,
-        client_addr: &SocketAddr,
+        client_addr: impl Display,
         secret: &Secret,
     ) -> Result<Self, HandshakeError>
     where
