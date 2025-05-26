@@ -62,8 +62,8 @@ async fn dummy_connections(
     };
     let host = host.unwrap();
     let client = client.unwrap();
-    let connection_a = yclip::Connection::new(stream_a, "b", Some(host));
-    let connection_b = yclip::Connection::new(stream_b, "a", Some(client));
+    let connection_a = yclip::Connection::new(stream_a, "b", host);
+    let connection_b = yclip::Connection::new(stream_b, "a", client);
     (connection_a, connection_b)
 }
 

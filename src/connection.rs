@@ -9,13 +9,13 @@ pub struct Connection<T> {
     reader: BufReader<ReadHalf<T>>,
     writer: WriteHalf<T>,
     peer_addr: String,
-    noise: Option<Noise>,
+    noise: Noise,
     read_buf: Vec<u8>,
     cobs_buf: Vec<u8>,
 }
 
 impl<T: AsyncRead + AsyncWrite> Connection<T> {
-    pub fn new(transport: T, peer_addr: impl Display, noise: Option<Noise>) -> Self {
+    pub fn new(transport: T, peer_addr: impl Display, noise: Noise) -> Self {
         let (reader, writer) = tokio::io::split(transport);
         Self {
             reader: BufReader::new(reader),
@@ -32,11 +32,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             !clipboard.is_empty(),
             "Logic bug! Shouldn't be trying to send an empty clipboard"
         );
-        let to_encode = if let Some(n) = self.noise.as_mut() {
-            n.encode_message(clipboard)?
-        } else {
-            clipboard.as_bytes()
-        };
+        let to_encode = self.noise.encode_message(clipboard)?;
         self.cobs_buf
             .resize(cobs::max_encoding_length(to_encode.len()), 0);
         let encoded_len = cobs::encode(to_encode, &mut self.cobs_buf);
@@ -64,11 +60,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         self.read_buf.pop();
         let len = cobs::decode_in_place(&mut self.read_buf)?;
         self.read_buf.truncate(len);
-        let to_decode = if let Some(n) = self.noise.as_mut() {
-            n.decode_message(&self.read_buf)?
-        } else {
-            &self.read_buf
-        };
+        let to_decode = self.noise.decode_message(&self.read_buf)?;
         let result = String::from_utf8(to_decode.to_vec())?;
         self.read_buf.clear();
 

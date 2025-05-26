@@ -31,18 +31,15 @@ pub async fn run_satellite(
     let mut stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
 
-    let noise = if let Some(s) = secret.as_deref() {
-        match secure::Noise::satellite(&mut stream, s).await {
-            Ok(n) => Some(n),
-            Err(e) if e.is_likely_password_mismatch() => {
-                error!("Handshake failed. Are you sure the passwords match?");
-                debug!("The actual error was {e:?}");
-                return Ok(());
-            }
-            Err(e) => return Err(e.into()),
+    let secret = secret.unwrap_or_default();
+    let noise = match secure::Noise::satellite(&mut stream, secret.as_str()).await {
+        Ok(n) => n,
+        Err(e) if e.is_likely_password_mismatch() => {
+            error!("Handshake failed. Are you sure the passwords match?");
+            debug!("The actual error was {e:?}");
+            return Ok(());
         }
-    } else {
-        None
+        Err(e) => return Err(e.into()),
     };
     info!("Connected to clipboard on {addr}");
     let connection = Connection::new(stream, addr.to_string(), noise);
@@ -75,23 +72,19 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    let secret = secret.as_deref().map(|s| Secret::new(s, None));
+    let secret = Secret::new(secret.unwrap_or_default().as_str(), None);
 
     loop {
         let (mut stream, peer_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        let noise = if let Some(s) = secret.as_ref() {
-            match Noise::host(&mut stream, &peer_addr, s).await {
-                Ok(n) => Some(n),
-                Err(e) if e.is_likely_password_mismatch() => {
-                    error!("Failed handshake with {peer_addr} (likely password mismatch)");
-                    debug!("The actual error was {e:?}");
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
+        let noise = match Noise::host(&mut stream, &peer_addr, &secret).await {
+            Ok(n) => n,
+            Err(e) if e.is_likely_password_mismatch() => {
+                error!("Failed handshake with {peer_addr} (likely password mismatch)");
+                debug!("The actual error was {e:?}");
+                continue;
             }
-        } else {
-            None
+            Err(e) => return Err(e.into()),
         };
 
         info!("New client {peer_addr} connected");
