@@ -160,7 +160,7 @@ where
             result = connection.read() => {
                 match result? {
                     ReadResult::Done(s) => {
-                        info!("Received new clipboard text: {s}");
+                        debug!("Received new clipboard text: {s}");
                         clipboard.set_text(s.as_str());
                         *CLIPBOARD.write().await = Some(s);
 

@@ -3,8 +3,8 @@ use std::{net::SocketAddr, time::Duration};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging();
     let opts = Options::parse();
+    init_logging(&opts)?;
 
     let res = if let Some(addr) = opts.host {
         yclip::run_satellite(addr, opts.refresh_interval, opts.secret).await
@@ -20,19 +20,25 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging() {
+fn init_logging(opts: &Options) -> anyhow::Result<()> {
+    use tracing::Level;
     use tracing_subscriber::prelude::*;
-    let subscriber = tracing_subscriber::registry();
 
-    // Respect RUST_LOG, falling back to INFO
-    let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing::Level::INFO.into())
-        .from_env_lossy();
+    let level = match opts.verbose {
+        0 => Level::INFO,
+        1 => Level::DEBUG,
+        2 => Level::TRACE,
+        _ => anyhow::bail!("Maximum supported verbosity is TRACE (-vv)"),
+    };
+
+    let subscriber = tracing_subscriber::registry();
+    let filter = tracing_subscriber::filter::LevelFilter::from_level(level);
     let subscriber = subscriber.with(filter);
 
     let layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let subscriber = subscriber.with(layer);
     subscriber.init();
+    Ok(())
 }
 
 #[derive(clap::Parser)]
@@ -46,6 +52,9 @@ struct Options {
     #[arg(short, long, required(cfg!(feature = "force-secure")))]
     /// Encrypt clipboards using this secret
     secret: Option<String>,
+    /// Increase verbosity (defaults to INFO and above)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {
