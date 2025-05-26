@@ -39,7 +39,7 @@ impl Clipboard for arboard::Clipboard {
             }
             // No point retrying on this
             Err(e @ Error::ClipboardNotSupported) => Err(e.into()),
-            // arboard::Error is marked as non_exhastive so we need a catch-all;
+            // arboard::Error is marked as non_exhaustive so we need a catch-all;
             // just fall over.
             Err(e) => Err(e.into()),
         }
