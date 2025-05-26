@@ -66,7 +66,7 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
         listener.local_addr()?.port(),
         password
             .as_ref()
-            .map(|s| format!(" -s {s}"))
+            .map(|s| format!(" -p {s}"))
             .unwrap_or_default()
     );
 
