@@ -31,7 +31,15 @@ pub async fn run_satellite(
     stream.set_nodelay(true)?;
 
     let noise = if let Some(s) = secret {
-        Some(secure::Noise::satellite(&mut stream, s).await?)
+        match secure::Noise::satellite(&mut stream, s).await {
+            Ok(n) => Some(n),
+            Err(e) if e.is_likely_password_mismatch() => {
+                error!("Handshake failed. Are you sure the passwords match?");
+                debug!("The actual error was {e:?}");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        }
     } else {
         None
     };
@@ -74,10 +82,12 @@ pub async fn run_host(refresh_interval: Duration, secret: Option<String>) -> any
         let noise = if let Some(s) = secret.as_ref() {
             match Noise::host(&mut stream, &peer_addr, s).await {
                 Ok(n) => Some(n),
-                Err(e) => {
-                    error!("Failed handshake with {peer_addr}: {e}");
+                Err(e) if e.is_likely_password_mismatch() => {
+                    error!("Failed handshake with {peer_addr} (likely password mismatch)");
+                    debug!("The actual error was {e:?}");
                     continue;
                 }
+                Err(e) => return Err(e.into()),
             }
         } else {
             None

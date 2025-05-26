@@ -13,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     if let Err(e) = res {
-        tracing::error!("yclip error: {e}");
+        tracing::error!("yclip error: {e:?}");
         std::process::exit(1);
     }
 

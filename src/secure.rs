@@ -22,12 +22,30 @@ pub struct Noise {
     buf: Vec<u8>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum HandshakeError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Noise error: {0}")]
+    Noise(#[from] snow::Error),
+}
+
+impl HandshakeError {
+    pub fn is_likely_password_mismatch(&self) -> bool {
+        match self {
+            Self::Noise(_) => true,
+            Self::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => true,
+            Self::Io(_) => false,
+        }
+    }
+}
+
 impl Noise {
     pub async fn host(
         stream: &mut TcpStream,
         client_addr: &SocketAddr,
         secret: &Secret,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, HandshakeError> {
         debug!(%client_addr, "New connection, starting secure handshake");
         let mut buf = vec![0; 65536];
 
@@ -76,7 +94,7 @@ impl Noise {
         Ok(&self.buf[..len])
     }
 
-    fn init_handshake(hash: &[u8; 32], initiator: bool) -> anyhow::Result<HandshakeState> {
+    fn init_handshake(hash: &[u8; 32], initiator: bool) -> Result<HandshakeState, HandshakeError> {
         let builder = Builder::new(PARAMS.clone()).psk(0, hash);
         if initiator {
             Ok(builder.build_initiator()?)
@@ -94,8 +112,8 @@ impl Noise {
         Ok(msg)
     }
 
-    async fn handshake_send(stream: &mut TcpStream, buf: &[u8]) -> anyhow::Result<()> {
-        let len = u16::try_from(buf.len())?;
+    async fn handshake_send(stream: &mut TcpStream, buf: &[u8]) -> io::Result<()> {
+        let len = u16::try_from(buf.len()).unwrap();
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(buf).await?;
         Ok(())
