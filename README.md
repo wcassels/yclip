@@ -1,6 +1,6 @@
 # yclip
 
-`yclip` implements a client-server model for sharing clipboard text. Invoking `yclip` starts a server locally; it'll log a command in the form `yclip <socket addr>` that you can run to connect from another machine on the network. Note that `yclip` understands hostnames too, as well as IPs. Once connected, text copied on one machine will be instantly pastable on the other!
+`yclip` implements a client-server model for sharing clipboard text. Invoke `yclip` to start a server locally; it will log a command in the form `yclip <host>:<port>` that you can run from elsewhere on the network to connect. Once connected, text copied on one machine will be instantly pastable on the other!
 
 Run `yclip --help` for the options: 
 ```
@@ -31,6 +31,6 @@ You can install `yclip` with `cargo install yclip --git <this url>`. Alternative
 
 `yclip` uses a ChaChaPoly1305 encryption scheme, with keys derived from the user-provided password via the NNpsk0 Noise protocol. Even without a password, network bytes will still be encrypted - it's just that anyone will be able to connect to your clipboard!
 
-## Fuzzing
+## Testing
 
-I've implemented a fuzzer that simulates a client and a server communicating via an in-memory channel. To test it out, run `cargo +nightly fuzz run --release local` (this requires a nightly release of Cargo).
+I've implemented a fuzzer that simulates a client and a server communicating via an in-memory channel, testing that the clipboards are synced as expected. It hasn't failed yet! Run it yourself with `cargo +nightly fuzz run --release local` (this requires a nightly release of Cargo).
