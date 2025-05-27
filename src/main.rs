@@ -32,6 +32,7 @@ struct Options {
     #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
     refresh_interval: Duration,
     /// Connect to the yclip server running on this socket address
+    #[arg(value_parser = parse_socket_addr)]
     socket: Option<SocketAddr>,
     #[arg(short, long, required(cfg!(feature = "force-secure")))]
     /// Encrypt clipboards using this password. Compile with the "force-secure" feature enabled
@@ -44,4 +45,11 @@ struct Options {
 
 fn duration_from_millis(s: &str) -> Result<Duration, <u64 as std::str::FromStr>::Err> {
     s.parse().map(Duration::from_millis)
+}
+
+fn parse_socket_addr(s: &str) -> anyhow::Result<SocketAddr> {
+    let mut addrs = std::net::ToSocketAddrs::to_socket_addrs(s)?;
+    addrs
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Couldn't resolve {s} to a socket address"))
 }
