@@ -3,6 +3,9 @@ use std::{net::SocketAddr, time::Duration};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    let _ = ansi_term::enable_ansi_support();
+
     let opts = Options::parse();
     yclip::init_logging(match opts.verbose {
         0 => tracing::Level::INFO,
