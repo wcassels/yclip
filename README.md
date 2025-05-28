@@ -25,7 +25,7 @@ Options:
 
 ## Installation
 
-You can install `yclip` with `cargo install yclip --git <this url>`. Alternatively, checkout this repo and build from source with `cargo build --release` - you'll find the binary in `target/release/`. If you want to make password-encryption mandatory, append `--features force-secure` to either command.
+You can build `yclip` from source using cargo. Either install it with `cargo install yclip --git <this url>`. or checkout this repo and run  `cargo build --release` - you'll find the binary in `target/release/`. If you want to make password-encryption mandatory, append `--features force-secure` to either command.
 
 ## Encryption
 
