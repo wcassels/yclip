@@ -43,18 +43,24 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     }
 
     pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
-        // This await is cancel-safe which means the whole method is... don't add any more awaits without
-        // thinking about it
-        let bytes_read = self.reader.read_until(0, &mut self.read_buf).await?;
-        if bytes_read == 0 {
-            return Ok(ReadResult::Eof);
-        } else if self.read_buf.last().copied() != Some(0) {
-            debug!(
-                "Received incomplete message from {}. This read: {bytes_read}, total: {} bytes",
-                self.peer_addr,
-                self.read_buf.len()
-            );
-            return Ok(ReadResult::Incomplete);
+        // This future is cancel-safe, and awaiting it is the first thing we do -
+        // which means that Connection::read is cancel-safe too. Think before moving it
+        // or adding more async components
+        match self.reader.read_until(0, &mut self.read_buf).await {
+            Ok(0) => return Ok(ReadResult::Eof),
+            Ok(bytes_read) if self.read_buf.last().copied() != Some(0) => {
+                debug!(
+                    "Received incomplete message from {}. This read: {bytes_read}, total: {} bytes",
+                    self.peer_addr,
+                    self.read_buf.len()
+                );
+                return Ok(ReadResult::Incomplete);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                return Ok(ReadResult::Eof)
+            }
+            Err(e) => return Err(e.into()),
         }
 
         self.read_buf.pop();
