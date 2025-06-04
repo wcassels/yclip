@@ -1,10 +1,6 @@
 use rand::Rng;
 use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
-use std::{
-    fmt::Display,
-    io::{self},
-    sync::LazyLock,
-};
+use std::{fmt::Display, io, sync::LazyLock};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tracing::*;
 
