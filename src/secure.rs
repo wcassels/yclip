@@ -15,70 +15,74 @@ pub struct Noise {
     buf: Vec<u8>,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum HandshakeError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Noise error: {0}")]
-    Noise(#[from] snow::Error),
-}
-
-impl HandshakeError {
-    pub fn is_likely_password_mismatch(&self) -> bool {
-        match self {
-            Self::Noise(_) => true,
-            Self::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => true,
-            Self::Io(_) => false,
-        }
-    }
-}
-
 impl Noise {
     pub async fn host<I>(
         stream: &mut I,
         client_addr: impl Display,
         secret: &Secret,
-    ) -> Result<Self, HandshakeError>
+    ) -> anyhow::Result<Option<Self>>
     where
         I: AsyncRead + AsyncWrite + Unpin,
     {
         debug!("New incoming connection from {client_addr}, starting secure handshake...");
         let mut buf = vec![0; 65536];
 
+        if !Self::version_check(stream).await? {
+            return Ok(None);
+        }
         Self::handshake_send(stream, secret.salt()).await?;
-
         let mut handshake = Self::init_handshake(secret.hash(), false)?;
 
-        handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
+        match handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf) {
+            Ok(x) => x,
+            Err(snow::Error::Decrypt) => {
+                error!("Decryption failed during handshake. Are you sure the passwords match?");
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        };
+
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
         debug!("Handshake with {client_addr} complete!");
 
-        Ok(Self {
+        Ok(Some(Self {
             transport: handshake.into_transport_mode()?,
             buf,
-        })
+        }))
     }
 
-    pub async fn satellite<I>(stream: &mut I, secret: &str) -> Result<Self, HandshakeError>
+    pub async fn satellite<I>(stream: &mut I, secret: &str) -> anyhow::Result<Option<Self>>
     where
         I: AsyncRead + AsyncWrite + Unpin,
     {
         let mut buf = vec![0; 65536];
         debug!("Established connection, starting secure handshake...");
+        if !Self::version_check(stream).await? {
+            return Ok(None);
+        }
         let salt: [u8; 32] = Self::handshake_recv(stream).await?.try_into().unwrap();
         let secret = Secret::new(secret, Some(salt));
         let mut handshake = Self::init_handshake(secret.hash(), true)?;
 
         let len = handshake.write_message(&[], &mut buf)?;
         Self::handshake_send(stream, &buf[..len]).await?;
-        handshake.read_message(&Self::handshake_recv(stream).await?, &mut buf)?;
+
+        let recv_bytes = match Self::handshake_recv(stream).await {
+            Ok(x) => x,
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                error!("Server dropped the connection mid-handshake. Are you sure the passwords match?");
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        handshake.read_message(recv_bytes.as_slice(), &mut buf)?;
         debug!("Handshake complete!");
 
-        Ok(Self {
+        Ok(Some(Self {
             transport: handshake.into_transport_mode()?,
             buf,
-        })
+        }))
     }
 
     pub fn encode_message(&mut self, msg: &str) -> anyhow::Result<&[u8]> {
@@ -93,7 +97,7 @@ impl Noise {
         Ok(&self.buf[..len])
     }
 
-    fn init_handshake(hash: &[u8; 32], initiator: bool) -> Result<HandshakeState, HandshakeError> {
+    fn init_handshake(hash: &[u8; 32], initiator: bool) -> Result<HandshakeState, snow::Error> {
         let builder = Builder::new(PARAMS.clone()).psk(0, hash);
         if initiator {
             Ok(builder.build_initiator()?)
@@ -116,6 +120,21 @@ impl Noise {
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(buf).await?;
         Ok(())
+    }
+
+    async fn version_check<I: AsyncRead + AsyncWrite + Unpin>(stream: &mut I) -> io::Result<bool> {
+        let version = env!("CARGO_PKG_VERSION");
+        Self::handshake_send(stream, version.as_bytes()).await?;
+        let peer_bytes = Self::handshake_recv(stream).await?;
+        let peer_version = String::from_utf8_lossy(&peer_bytes);
+        if version != peer_version {
+            error!(
+                "Handshake failed: peer version (v{peer_version}) doesn't match mine ({version})"
+            );
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 }
 

@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt as _},
     net::{TcpStream, UdpSocket},
     sync::{Notify, RwLock},
 };
@@ -32,14 +32,8 @@ pub async fn run_satellite(
     stream.set_nodelay(true)?;
 
     let password = password.unwrap_or_default();
-    let noise = match secure::Noise::satellite(&mut stream, password.as_str()).await {
-        Ok(n) => n,
-        Err(e) if e.is_likely_password_mismatch() => {
-            error!("Handshake failed. Are you sure the passwords match?");
-            debug!("The actual error was {e:?}");
-            return Ok(());
-        }
-        Err(e) => return Err(e.into()),
+    let Some(noise) = secure::Noise::satellite(&mut stream, password.as_str()).await? else {
+        return Ok(());
     };
     info!("Connected to clipboard on {addr}");
     let connection = Connection::new(stream, addr.to_string(), noise);
@@ -77,14 +71,9 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
     loop {
         let (mut stream, peer_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        let noise = match Noise::host(&mut stream, &peer_addr, &secret).await {
-            Ok(n) => n,
-            Err(e) if e.is_likely_password_mismatch() => {
-                error!("Failed handshake with {peer_addr} (likely password mismatch)");
-                debug!("The actual error was {e:?}");
-                continue;
-            }
-            Err(e) => return Err(e.into()),
+        let Some(noise) = Noise::host(&mut stream, &peer_addr, &secret).await? else {
+            let _ = stream.shutdown().await;
+            continue;
         };
 
         info!("New client {peer_addr} connected");
