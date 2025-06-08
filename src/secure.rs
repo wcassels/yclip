@@ -85,10 +85,8 @@ impl Noise {
         }))
     }
 
-    pub fn encode_message(&mut self, msg: &str) -> anyhow::Result<&[u8]> {
-        let len = self
-            .transport
-            .write_message(msg.as_bytes(), &mut self.buf)?;
+    pub fn encode_message(&mut self, msg: &[u8]) -> anyhow::Result<&[u8]> {
+        let len = self.transport.write_message(msg, &mut self.buf)?;
         Ok(&self.buf[..len])
     }
 

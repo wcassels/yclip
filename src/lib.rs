@@ -3,6 +3,7 @@ pub use connection::Connection;
 use connection::ReadResult;
 pub use secure::{Noise, Secret};
 use std::{
+    fmt,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -21,7 +22,22 @@ mod secure;
 
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
-static CLIPBOARD: RwLock<Option<String>> = RwLock::const_new(None);
+#[derive(PartialEq, Debug)]
+pub enum ClipboardChange {
+    Text(String),
+    Image(Vec<u8>), // Whatever
+}
+
+impl fmt::Display for ClipboardChange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Text(s) => write!(f, "Text: {s}"),
+            Self::Image(s) => write!(f, "Image: {s:?}"), // TODO this is almost certainly not what we want
+        }
+    }
+}
+
+static CLIPBOARD: RwLock<Option<ClipboardChange>> = RwLock::const_new(None);
 
 pub async fn run_satellite(
     addr: SocketAddr,
@@ -102,11 +118,11 @@ pub async fn watch_local<C: Clipboard>(
     refresh_rate: Duration,
 ) -> anyhow::Result<()> {
     let mut clipboard = C::new()?;
-    *CLIPBOARD.write().await = clipboard.get_text()?;
+    *CLIPBOARD.write().await = clipboard.get_text()?.map(ClipboardChange::Text);
 
     loop {
         tokio::time::sleep(refresh_rate).await;
-        let Some(new_text) = clipboard.get_text()? else {
+        let Some(new_text) = clipboard.get_text()?.map(ClipboardChange::Text) else {
             continue;
         };
 
@@ -146,7 +162,7 @@ where
                     ReadResult::Done(s) => {
                         debug!("Received new clipboard text: {s}");
                         clipboard.set_text(s.as_str());
-                        *CLIPBOARD.write().await = Some(s);
+                        *CLIPBOARD.write().await = Some(ClipboardChange::Text(s));
 
                         // We're not a waiter, so we won't get woken up by our own update later
                         notify.notify_waiters();
