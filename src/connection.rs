@@ -11,6 +11,8 @@ const MAX_CHUNKS: usize = 1000;
 const METADATA_LEN: usize = 1 + 1 + 2;
 const CHUNK_HEADER_LEN: usize = 2 + 2;
 
+const _: () = assert!(MIN_COMPRESSION_LEN < CHUNK_SIZE);
+
 pub struct Connection<T: AsyncRead + AsyncWrite> {
     reader: BufReader<ReadHalf<T>>,
     writer: BufWriter<WriteHalf<T>>,
