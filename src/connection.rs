@@ -104,6 +104,12 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             None => {
                 let mut meta = Metadata::default();
                 self.reader.read_exact(&mut meta.meta_bytes).await?;
+                debug!(
+                    "New incoming message: is_text={}, compress={}, n_chunks={}",
+                    meta.is_text(),
+                    meta.compress(),
+                    meta.n_chunks()
+                );
                 self.current_meta.insert(meta)
             }
         };
@@ -121,6 +127,11 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 None => {
                     let mut header = [0; CHUNK_HEADER_LEN];
                     self.reader.read_exact(&mut header).await?;
+                    debug!(
+                        "Chunk {} has len {}",
+                        Metadata::chunk_idx(header),
+                        Metadata::chunk_len(header)
+                    );
                     meta.current_chunk_header.insert(header)
                 }
             };
