@@ -60,8 +60,8 @@ async fn dummy_connections(
         Noise::host(&mut stream_a, "b", &secret),
         Noise::satellite(&mut stream_b, password),
     };
-    let host = host.unwrap();
-    let client = client.unwrap();
+    let host = host.unwrap().unwrap();
+    let client = client.unwrap().unwrap();
     let connection_a = yclip::Connection::new(stream_a, "b", host);
     let connection_b = yclip::Connection::new(stream_b, "a", client);
     (connection_a, connection_b)
@@ -130,7 +130,7 @@ libfuzzer_sys::fuzz_target!(
         });
     },
     |input: (String, String)| {
-        let (password, input) = input;
-        test(password.as_str(), input.as_str());
+        let (input, password) = input;
+        test(input.as_str(), password.as_str());
     }
 );
