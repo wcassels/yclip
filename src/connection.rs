@@ -1,4 +1,5 @@
 use crate::{secure::Noise, ClipboardChange};
+use anyhow::Context;
 use std::fmt::Display;
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf,
@@ -89,7 +90,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
 
     pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
         match self.read_inner().await {
-            Ok(x) => Ok(ReadResult::Done(x)),
+            Ok(x) => Ok(ReadResult::Done(ClipboardChange::Text(x))),
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 Ok(ReadResult::Eof)
             }
@@ -145,27 +146,32 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             self.reader.read_exact(&mut self.read_buf).await?;
             let decoded = self.noise.decode_message(&self.read_buf)?;
 
-            if compress {
-                zstd::stream::copy_decode(decoded, &mut self.finished)?;
-            } else {
+            if !compress {
                 if n_chunks != 1 {
                     return Err(Error::Adhoc(anyhow::anyhow!(
                         "Saw a message >63KB that wasn't compressed!"
                     )));
                 }
-                let clipboard = std::str::from_utf8(decoded)?.to_string();
+                let clipboard = String::from_utf8(decoded.to_vec())?;
                 self.current_meta.take();
                 return Ok(clipboard);
             }
 
+            // TODO: Less copying
+            self.finished.extend_from_slice(decoded);
+
             if chunk_idx == n_chunks - 1 {
                 // Done!
-                let clipboard = std::str::from_utf8(&self.finished)?.to_string();
+                let mut decompressed = Vec::new();
+                zstd::stream::copy_decode(self.finished.as_slice(), &mut decompressed)
+                    .context("Decompression failure")?;
+                let clipboard = String::from_utf8(decompressed)?;
                 self.current_meta.take();
                 return Ok(clipboard);
             }
 
             meta.current_chunk_header.take();
+            debug!("Finished chunk {chunk_idx}");
         }
     }
 
@@ -181,7 +187,7 @@ enum Error {
     #[error("Decode error: {0}")]
     Noise(#[from] snow::Error),
     #[error("Clipboard wasn't utf8: {0:?}")]
-    NonUt8(#[from] std::str::Utf8Error),
+    NonUt8(#[from] std::string::FromUtf8Error),
     #[error("Logic error: {0}")]
     Adhoc(#[from] anyhow::Error),
 }
@@ -190,7 +196,7 @@ enum Error {
 pub enum ReadResult {
     Eof,
     Incomplete,
-    Done(String),
+    Done(ClipboardChange),
 }
 
 #[derive(Clone, Copy, Default)]

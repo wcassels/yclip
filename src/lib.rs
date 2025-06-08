@@ -20,6 +20,9 @@ mod clipboard;
 mod connection;
 mod secure;
 
+#[cfg(any(test, fuzzing))]
+pub mod test;
+
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 #[derive(PartialEq, Debug)]
@@ -31,7 +34,8 @@ pub enum ClipboardChange {
 impl fmt::Display for ClipboardChange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Text(s) => write!(f, "Text: {s}"),
+            Self::Text(s) if s.len() < 100 => write!(f, "Text: {s}"),
+            Self::Text(s) => write!(f, "Text ({} bytes long)", s.len()),
             Self::Image(s) => write!(f, "Image: {s:?}"), // TODO this is almost certainly not what we want
         }
     }
@@ -153,16 +157,20 @@ where
                 // We're holding a read lock while we write the bytes into
                 // the buffer (just so we can log them afterwards!)
                 connection.send(new_clip).await?;
-                debug!("Sent {new_clip:?} to {}", connection.peer_addr());
+                debug!("Sent {new_clip} to {}", connection.peer_addr());
                 drop(lock);
             },
             result = connection.read() => {
-                trace!("Read {:?}", result);
                 match result? {
-                    ReadResult::Done(s) => {
-                        debug!("Received new clipboard text: {s}");
-                        clipboard.set_text(s.as_str());
-                        *CLIPBOARD.write().await = Some(ClipboardChange::Text(s));
+                    ReadResult::Done(change) => {
+                        debug!("Received new clipboard: {change}");
+                        match change {
+                            ClipboardChange::Text(s) => {
+                                clipboard.set_text(s.as_str());
+                                *CLIPBOARD.write().await = Some(ClipboardChange::Text(s));
+                            },
+                            ClipboardChange::Image(_) => unimplemented!("Images unsupported for now"),
+                        }
 
                         // We're not a waiter, so we won't get woken up by our own update later
                         notify.notify_waiters();
