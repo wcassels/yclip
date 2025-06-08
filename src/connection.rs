@@ -60,7 +60,8 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         let n_chunks = 1 + to_encode.len() / CHUNK_SIZE;
         anyhow::ensure!(
             n_chunks < MAX_CHUNKS,
-            "Refusing to send large clipboard contents (>63MB, even after compression)"
+            "Refusing to send oversized clipboard contents ({}MB post-compression - the limit is 63MB)",
+            to_encode.len() / (1024 * 1024)
         );
         let n_chunks = u16::try_from(n_chunks).unwrap();
 
