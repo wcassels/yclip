@@ -7,6 +7,6 @@ libfuzzer_sys::fuzz_target!(
     },
     |input: (String, String)| {
         let (input, password) = input;
-        yclip::test::test(input.as_str(), password.as_str());
+        yclip::test::test(&[input], password.as_str());
     }
 );

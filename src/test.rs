@@ -60,9 +60,7 @@ pub fn test_setup() {
     });
 }
 
-pub fn test(input: &str, password: &str) {
-    let prev = ClipboardB.get_text().unwrap();
-
+pub fn test(input: &[String], password: &str) {
     RUNTIME.block_on(async {
         let (conn_a, conn_b) = dummy_connections(password).await;
         let handle_a = tokio::task::spawn(async {
@@ -80,28 +78,39 @@ pub fn test(input: &str, password: &str) {
         // immediately reschedule this task
         tokio::time::sleep(Duration::from_millis(1)).await;
 
-        let notified = NOTIFY_B.notified();
-        ClipboardA.set_text(input);
+        for x in input {
+            let prev = ClipboardB.get_text().unwrap();
 
-        // Empty input or same as before => don't expect B to change
-        let change_expected = prev.as_deref() != Some(input) && !input.is_empty();
-        let expected = if !change_expected {
-            prev.as_deref()
-        } else {
-            // Just makes sure deadlocking/missing clipboard updates causes the
-            // test case to fail
-            tokio::time::timeout(Duration::from_secs(5), notified)
-                .await
-                .expect("Waited 5 seconds but didn't see the clipboard come through?");
-            Some(input)
-        };
+            let notified = NOTIFY_B.notified();
+            ClipboardA.set_text(x.as_str());
 
-        assert_eq!(
-            ClipboardB.get_text().unwrap().as_deref(),
-            expected,
-            "input: {input}, password: {password}, change expected: {change_expected}. {} successful tests in total",
-            COUNT.load(Ordering::Relaxed)
-        );
+            // Empty input or same as before => don't expect B to change
+            let change_expected = prev.as_deref() != Some(x.as_str()) && !x.is_empty();
+            let expected = if !change_expected {
+                prev.as_deref()
+            } else {
+                // Just makes sure deadlocking/missing clipboard updates causes the
+                // test case to fail
+                tokio::time::timeout(Duration::from_secs(5), notified)
+                    .await
+                    .expect("Waited 5 seconds but didn't see the clipboard come through?");
+                Some(x.as_str())
+            };
+
+            let b_contents = ClipboardB.get_text().unwrap();
+            if std::cmp::min(b_contents.unwrap_or_default().len(), expected.unwrap_or_default().len()) <= 1000 {
+                assert_eq!(
+                    ClipboardB.get_text().unwrap().as_deref(),
+                    expected,
+                    "input: {}, password: {password}, change expected: {change_expected}. {} successful tests in total",
+                    if x.len() < 100 { x }  else { "<long, omitting>" },
+                    COUNT.load(Ordering::Relaxed)
+                );
+            } else if ClipboardB.get_text().unwrap().as_deref() != expected {
+                panic!("ClipboardB's contents didn't match expected. Omitting contents due to length");
+            }
+
+        }
 
         handle_a.abort();
         handle_b.abort();
@@ -109,7 +118,7 @@ pub fn test(input: &str, password: &str) {
 
     let done = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     if done % 10 == 0 {
-        info!("Passed {done} tests (latest in: {input} pw: {password})");
+        info!("Passed {done} tests (latest in: {input:?} pw: {password})");
     }
 }
 
@@ -128,7 +137,7 @@ async fn dummy_connections(password: &str) -> (Connection<DuplexStream>, Connect
 }
 
 #[test]
-fn test_large_clipboard() {
+fn test_chunking() {
     crate::init_logging(Level::TRACE).unwrap();
     let mut rng = rand::rng();
     let uniform = Uniform::<char>::new('\u{0020}', '\u{10FFFF}').unwrap();
@@ -138,5 +147,16 @@ fn test_large_clipboard() {
     uniform.append_string(&mut rng, &mut clipboard, 5_000_000);
 
     test_setup();
-    test(clipboard.as_str(), "foobar");
+    test(&[clipboard], "foobar");
+
+    // Now send more chunked clipboards
+    let mut clipboard = String::new();
+    let mut inputs = Vec::new();
+    for _ in 0..50 {
+        uniform.append_string(&mut rng, &mut clipboard, 500_000);
+        inputs.push(clipboard.clone());
+        clipboard.clear();
+    }
+
+    test(inputs.as_slice(), "foobar");
 }
