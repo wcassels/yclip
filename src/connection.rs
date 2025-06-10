@@ -85,6 +85,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         }
 
         self.writer.flush().await?;
+        self.compress_buf.clear();
 
         Ok(())
     }
@@ -167,6 +168,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 zstd::stream::copy_decode(self.finished.as_slice(), &mut decompressed)
                     .context("Decompression failure")?;
                 let clipboard = String::from_utf8(decompressed)?;
+                self.finished.clear();
                 self.current_meta.take();
                 return Ok(clipboard);
             }
