@@ -1,9 +1,6 @@
-use cocoa::appkit::{NSApp, NSApplication, NSPasteboard};
-use cocoa::base::nil;
-use cocoa::foundation::NSAutoreleasePool;
-use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
+use objc2_app_kit::NSPasteboard;
 use tokio::sync::Notify;
 
 pub struct Listener {
@@ -20,7 +17,7 @@ impl Listener {
             Err(std::env::VarError::NotPresent) => Duration::from_millis(200),
             Err(e) => return Err(e.into()),
         };
-        std::thread::spawn(|| listen_clipboard(dupe, poll_interval));
+        std::thread::spawn(move || listen_clipboard(dupe, poll_interval));
 
         Ok(Self { notify })
     }
@@ -33,17 +30,13 @@ impl Listener {
 pub fn listen_clipboard(
     notify: Arc<Notify>,
     poll_interval: Duration,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     unsafe {
-        let _pool = NSAutoreleasePool::new(nil);
-        let app = NSApp();
-        app.setActivationPolicy_(cocoa::appkit::NSApplicationActivationPolicyProhibited);
-
-        let pasteboard = NSPasteboard::generalPasteboard(nil);
-        let mut count = pasteboard.changeCount();
+        let board = NSPasteboard::generalPasteboard();
+        let mut count = board.changeCount();
 
         loop {
-            let new_count = pasteboard.changeCount();
+            let new_count = board.changeCount();
             if new_count != count {
                 notify.notify_one();
                 count = new_count;
