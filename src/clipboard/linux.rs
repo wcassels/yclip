@@ -22,9 +22,10 @@ impl Listener {
 
         // Initialize the XFixes extension
         let xfixes_query = x_conn.xfixes_query_version(5, 0)?.reply()?;
-        debug!(
+        trace!(
             "XFixes version: {}.{}",
-            xfixes_query.major_version, xfixes_query.minor_version
+            xfixes_query.major_version,
+            xfixes_query.minor_version
         );
 
         // Select for SelectionNotify events
@@ -43,7 +44,7 @@ impl Listener {
     pub async fn change(&self) -> anyhow::Result<()> {
         async {
             let async_fd = AsyncFd::new(self.x_conn.stream().as_raw_fd())?;
-            debug!("Listening for SelectionNotify events...");
+            trace!("Listening for SelectionNotify events...");
 
             loop {
                 let mut guard = async_fd.readable().await?;
