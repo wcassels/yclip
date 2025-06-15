@@ -4,6 +4,7 @@ use rustc_hash::FxHasher;
 use std::{
     fmt,
     hash::{Hash, Hasher},
+    io,
     time::Duration,
 };
 use tokio::sync::RwLock;
@@ -49,6 +50,20 @@ impl ClipboardChange {
             ClipboardChange::Image(_) => ClipboardKind::Image,
         }
     }
+
+    pub fn write_all(&self, mut writer: impl io::Write) -> anyhow::Result<()> {
+        match self {
+            ClipboardChange::Text(x) => {
+                writer.write_all(x.as_bytes())?;
+            }
+            ClipboardChange::Image(x) => {
+                writer.write_all(x.bytes.as_ref())?;
+                writer.write_all(u64::try_from(x.width)?.to_le_bytes().as_slice())?;
+                writer.write_all(u64::try_from(x.height)?.to_le_bytes().as_slice())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PartialEq for ClipboardChange {
@@ -87,7 +102,7 @@ impl Hash for ClipboardChange {
     }
 }
 
-#[derive(Enum)]
+#[derive(Debug, Enum)]
 pub enum ClipboardKind {
     Text,
     Image,

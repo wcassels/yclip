@@ -1,7 +1,7 @@
 use crate::{secure::Noise, ClipboardChange};
 use anyhow::Context;
 use arboard::ImageData;
-use std::{fmt::Display, io::Write};
+use std::fmt::Display;
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf,
 };
@@ -44,23 +44,14 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     pub async fn send(&mut self, update: &ClipboardChange) -> anyhow::Result<()> {
         self.compressed.clear();
         let compress = update.len() > MIN_COMPRESSION_LEN;
-        let mut writer: Box<dyn Write + Send> = if compress {
-            Box::new(zstd::Encoder::new(&mut self.compressed, 0)?)
+
+        if compress {
+            let mut encoder = zstd::Encoder::new(&mut self.compressed, 0)?;
+            update.write_all(&mut encoder)?;
+            encoder.finish()?;
         } else {
-            Box::new(&mut self.compressed)
-        };
-        match &update {
-            ClipboardChange::Text(x) => {
-                writer.write_all(x.as_bytes())?;
-            }
-            ClipboardChange::Image(x) => {
-                writer.write_all(x.bytes.as_ref())?;
-                writer.write_all(u64::try_from(x.width)?.to_le_bytes().as_slice())?;
-                writer.write_all(u64::try_from(x.height)?.to_le_bytes().as_slice())?;
-            }
+            update.write_all(&mut self.compressed)?;
         }
-        writer.flush()?;
-        drop(writer);
 
         anyhow::ensure!(
             !self.compressed.is_empty(),
