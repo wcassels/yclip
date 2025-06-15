@@ -1,6 +1,7 @@
 use crate::{secure::Noise, ClipboardChange};
 use anyhow::Context;
-use std::fmt::Display;
+use arboard::ImageData;
+use std::{fmt::Display, io::Write};
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, ReadHalf, WriteHalf,
 };
@@ -21,7 +22,7 @@ pub struct Connection<T: AsyncRead + AsyncWrite> {
     noise: Noise,
     read_buf: Vec<u8>,
     finished: Vec<u8>,
-    compress_buf: Vec<u8>,
+    compressed: Vec<u8>,
     current_meta: Option<Metadata>,
 }
 
@@ -35,33 +36,42 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             noise,
             read_buf: Vec::new(),
             finished: Vec::new(),
-            compress_buf: Vec::new(),
+            compressed: Vec::new(),
             current_meta: None,
         }
     }
 
     pub async fn send(&mut self, update: &ClipboardChange) -> anyhow::Result<()> {
-        let bytes = match &update {
-            ClipboardChange::Text(x) => x.as_bytes(),
-            ClipboardChange::Image(x) => x.as_slice(),
+        self.compressed.clear();
+        let compress = update.len() > MIN_COMPRESSION_LEN;
+        let mut writer: Box<dyn Write + Send> = if compress {
+            Box::new(zstd::Encoder::new(&mut self.compressed, 0)?)
+        } else {
+            Box::new(&mut self.compressed)
         };
+        match &update {
+            ClipboardChange::Text(x) => {
+                writer.write_all(x.as_bytes())?;
+            }
+            ClipboardChange::Image(x) => {
+                writer.write_all(x.bytes.as_ref())?;
+                writer.write_all(u64::try_from(x.width)?.to_le_bytes().as_slice())?;
+                writer.write_all(u64::try_from(x.height)?.to_le_bytes().as_slice())?;
+            }
+        }
+        writer.flush()?;
+        drop(writer);
+
         anyhow::ensure!(
-            !bytes.is_empty(),
+            !self.compressed.is_empty(),
             "Logic bug! Shouldn't be trying to send an empty clipboard"
         );
-        let compress = bytes.len() > MIN_COMPRESSION_LEN;
-        let to_encode = if compress {
-            zstd::stream::copy_encode(bytes, &mut self.compress_buf, 0)?;
-            &self.compress_buf
-        } else {
-            bytes
-        };
 
-        let n_chunks = 1 + to_encode.len() / CHUNK_SIZE;
+        let n_chunks = 1 + self.compressed.len() / CHUNK_SIZE;
         anyhow::ensure!(
             n_chunks < MAX_CHUNKS,
             "Refusing to send oversized clipboard contents ({}MB post-compression - the limit is 63MB)",
-            to_encode.len() / (1024 * 1024)
+            self.compressed.len() / (1024 * 1024)
         );
         let n_chunks = u16::try_from(n_chunks).unwrap();
 
@@ -76,7 +86,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         self.writer.write_u8(if compress { 1 } else { 0 }).await?;
         self.writer.write_u16_le(n_chunks).await?;
 
-        for (idx, chunk) in (0..).zip(to_encode.chunks(CHUNK_SIZE)) {
+        for (idx, chunk) in (0..).zip(self.compressed.chunks(CHUNK_SIZE)) {
             let encoded = self.noise.encode_message(chunk)?;
             self.writer.write_u16_le(idx).await?;
             let len = u16::try_from(encoded.len()).unwrap();
@@ -85,14 +95,32 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         }
 
         self.writer.flush().await?;
-        self.compress_buf.clear();
 
         Ok(())
     }
 
     pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
         match self.read_inner().await {
-            Ok(x) => Ok(ReadResult::Done(ClipboardChange::Text(x))),
+            Ok((bytes, meta)) if meta.is_text() => Ok(ReadResult::Done(ClipboardChange::Text(
+                String::from_utf8(bytes)?,
+            ))),
+            Ok((mut bytes, _meta)) => {
+                let len = bytes.len();
+                anyhow::ensure!(
+                    len >= 2 * std::mem::size_of::<u64>(),
+                    "I didn't even receive enough bytes to read a width and a height?"
+                );
+                let width_bytes = bytes[len - 2 * 8..len - 8].try_into()?;
+                let height_bytes = bytes[len - 8..].try_into()?;
+                let width = usize::try_from(u64::from_le_bytes(width_bytes))?;
+                let height = usize::try_from(u64::from_le_bytes(height_bytes))?;
+                bytes.truncate(len - 2 * 8);
+                Ok(ReadResult::Done(ClipboardChange::Image(ImageData {
+                    width,
+                    height,
+                    bytes: std::borrow::Cow::Owned(bytes),
+                })))
+            }
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 Ok(ReadResult::Eof)
             }
@@ -103,7 +131,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     // Have to be quite a bit more careful to make this cancel-safe
     // (basically have to chain cancel-safe futures, and persist
     // all state in case any of them are cancelled)
-    async fn read_inner(&mut self) -> Result<String, Error> {
+    async fn read_inner(&mut self) -> Result<(Vec<u8>, Metadata), Error> {
         let meta = match &mut self.current_meta {
             Some(m) => m,
             None => {
@@ -118,11 +146,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 self.current_meta.insert(meta)
             }
         };
-        if !meta.is_text() {
-            return Err(Error::Adhoc(anyhow::anyhow!(
-                "Image syncing isn't supported yet!"
-            )));
-        }
+
         let compress = meta.compress();
         let n_chunks = meta.n_chunks();
 
@@ -154,9 +178,8 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                         "Saw a message >63KB that wasn't compressed!"
                     )));
                 }
-                let clipboard = String::from_utf8(decoded.to_vec())?;
-                self.current_meta.take();
-                return Ok(clipboard);
+                let meta = self.current_meta.take().unwrap();
+                return Ok((decoded.to_vec(), meta));
             }
 
             // TODO: Less copying
@@ -167,10 +190,9 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 let mut decompressed = Vec::new();
                 zstd::stream::copy_decode(self.finished.as_slice(), &mut decompressed)
                     .context("Decompression failure")?;
-                let clipboard = String::from_utf8(decompressed)?;
                 self.finished.clear();
-                self.current_meta.take();
-                return Ok(clipboard);
+                let meta = self.current_meta.take().unwrap();
+                return Ok((decompressed, meta));
             }
 
             meta.current_chunk_header.take();

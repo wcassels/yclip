@@ -1,10 +1,10 @@
-use clipboard::Board;
+use arboard::ImageData;
 pub use clipboard::Clipboard;
+use clipboard::{Board, ClipboardChange};
 pub use connection::Connection;
 use connection::ReadResult;
 pub use secure::{Noise, Secret};
 use std::{
-    fmt,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -12,7 +12,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt as _},
     net::{TcpStream, UdpSocket},
-    sync::{Notify, RwLock},
+    sync::Notify,
 };
 pub use tracing;
 use tracing::*;
@@ -25,24 +25,6 @@ mod secure;
 pub mod test;
 
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-
-#[derive(PartialEq, Debug)]
-pub enum ClipboardChange {
-    Text(String),
-    Image(Vec<u8>), // Whatever
-}
-
-impl fmt::Display for ClipboardChange {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Text(s) if s.len() < 100 => write!(f, "Text: {s}"),
-            Self::Text(s) => write!(f, "Text ({} bytes long)", s.len()),
-            Self::Image(s) => write!(f, "Image: {s:?}"), // TODO this is almost certainly not what we want
-        }
-    }
-}
-
-static CLIPBOARD: RwLock<Option<ClipboardChange>> = RwLock::const_new(None);
 
 pub async fn run_satellite(
     addr: SocketAddr,
@@ -122,11 +104,17 @@ pub async fn watch_local<B: Board>(
     notify: Arc<Notify>,
     refresh_rate: Duration,
 ) -> anyhow::Result<()> {
-    *CLIPBOARD.write().await = B::new()?.get_text()?.map(ClipboardChange::Text);
+    let mut board = B::new()?;
+    let latest_text = board.get_text()?.map(ClipboardChange::Text);
+    let latest_image = board.get_image()?.map(ClipboardChange::Image);
+    clipboard::store_hash(latest_text.as_ref()).await;
+    clipboard::store_hash(latest_image.as_ref()).await;
+    drop(board);
+
     let mut clipboard = Clipboard::<B>::new(refresh_rate)?;
     loop {
         let change = clipboard.listen_for_change().await?;
-        *CLIPBOARD.write().await = Some(change);
+        *clipboard::LATEST_CHANGE.write().await = Some(change);
         notify.notify_waiters();
     }
 }
@@ -145,7 +133,7 @@ where
             _notified = notify.notified() => {
                 trace!("Notified of clipboard change");
                 // Someone has updated the clipboard. Send it to our client.
-                let lock = CLIPBOARD.read().await;
+                let lock = clipboard::LATEST_CHANGE.read().await;
                 let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
                 // We're holding a read lock while we write the bytes into
                 // the buffer (just so we can log them afterwards!)
@@ -157,12 +145,19 @@ where
                 match result? {
                     ReadResult::Done(change) => {
                         debug!("Received new clipboard: {change}");
+                        clipboard::store_hash(Some(&change)).await;
                         match change {
                             ClipboardChange::Text(s) => {
                                 board.set_text(s.as_str());
-                                *CLIPBOARD.write().await = Some(ClipboardChange::Text(s));
                             },
-                            ClipboardChange::Image(_) => unimplemented!("Images unsupported for now"),
+                            ClipboardChange::Image(x) => {
+                                board.set_image(ImageData {
+                                    height: x.height,
+                                    width: x.width,
+                                    // Might as well avoid copying this
+                                    bytes: std::borrow::Cow::Borrowed(x.bytes.as_ref()),
+                                });
+                            },
                         }
 
                         // We're not a waiter, so we won't get woken up by our own update later
