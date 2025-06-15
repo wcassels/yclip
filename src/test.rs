@@ -1,4 +1,5 @@
-use crate::{Clipboard, Connection, Noise, Secret};
+use crate::{clipboard::Board, Connection, Noise, Secret};
+use arboard::ImageData;
 use rand::distr::{SampleString, Uniform};
 use std::{
     sync::{
@@ -22,7 +23,7 @@ static CLIPBOARD_B: RwLock<Option<String>> = RwLock::new(None);
 struct ClipboardA;
 struct ClipboardB;
 
-impl Clipboard for ClipboardA {
+impl Board for ClipboardA {
     fn new() -> anyhow::Result<Self> {
         Ok(Self)
     }
@@ -33,9 +34,15 @@ impl Clipboard for ClipboardA {
     fn get_text(&mut self) -> anyhow::Result<Option<String>> {
         Ok(CLIPBOARD_A.read().unwrap().clone())
     }
+    fn set_image(&mut self, _image: ImageData<'_>) {
+        unimplemented!()
+    }
+    fn get_image(&mut self) -> anyhow::Result<Option<ImageData<'static>>> {
+        Ok(None)
+    }
 }
 
-impl Clipboard for ClipboardB {
+impl Board for ClipboardB {
     fn new() -> anyhow::Result<Self> {
         Ok(Self)
     }
@@ -46,6 +53,12 @@ impl Clipboard for ClipboardB {
     fn get_text(&mut self) -> anyhow::Result<Option<String>> {
         let res = Ok(CLIPBOARD_B.read().unwrap().clone());
         res
+    }
+    fn set_image(&mut self, _image: ImageData<'_>) {
+        unimplemented!()
+    }
+    fn get_image(&mut self) -> anyhow::Result<Option<ImageData<'static>>> {
+        Ok(None)
     }
 }
 
