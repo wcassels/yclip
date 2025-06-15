@@ -122,7 +122,7 @@ impl<B: Board> Clipboard<B> {
                     }
                 };
 
-            let hashes = CLIPBOARD_HASHES.read().await;
+            let hashes = *CLIPBOARD_HASHES.read().await;
             let text = self
                 .board
                 .get_text()?
