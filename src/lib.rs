@@ -92,9 +92,9 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
     }
 }
 
-fn spawn_local_watcher<B: Board>(notify: Arc<Notify>, refresh_rate: Duration) {
+fn spawn_local_watcher<B: Board>(notify: Arc<Notify>, poll_interval: Duration) {
     tokio::task::spawn(async move {
-        if let Err(e) = watch_local::<B>(notify, refresh_rate).await {
+        if let Err(e) = watch_local::<B>(notify, poll_interval).await {
             error!("Local watcher exited with an error: {e}");
         }
     });
@@ -102,7 +102,7 @@ fn spawn_local_watcher<B: Board>(notify: Arc<Notify>, refresh_rate: Duration) {
 
 pub async fn watch_local<B: Board>(
     notify: Arc<Notify>,
-    refresh_rate: Duration,
+    poll_interval: Duration,
 ) -> anyhow::Result<()> {
     let mut board = B::new()?;
     let latest_text = board.get_text()?.map(ClipboardChange::Text);
@@ -111,7 +111,7 @@ pub async fn watch_local<B: Board>(
     clipboard::store_hash(latest_image.as_ref()).await;
     drop(board);
 
-    let mut clipboard = Clipboard::<B>::new(refresh_rate)?;
+    let mut clipboard = Clipboard::<B>::new(poll_interval)?;
     loop {
         let change = clipboard.listen_for_change().await?;
         *clipboard::LATEST_CHANGE.write().await = Some(change);
