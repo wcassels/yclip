@@ -1,6 +1,6 @@
 # yclip
 
-`yclip` implements a client-server model for sharing clipboard text. Invoke `yclip` to start a server locally; it will log a command in the form `yclip <host>:<port>` that you can run from elsewhere on the network to connect. Once connected, text copied on one machine will be instantly pastable on the other!
+`yclip` implements a client-server model for sharing clipboard content. Invoke `yclip` to start a server locally; it will log a command in the form `yclip <host>:<port>` that you can run from elsewhere on the network to connect. Once connected, text/images copied on one machine will be instantly* pastable on the other!
 
 Run `yclip --help` for the options: 
 ```
@@ -10,18 +10,26 @@ Arguments:
   [SOCKET]  Connect to the yclip server running on this socket address
 
 Options:
-  -r, --refresh-interval <REFRESH_INTERVAL>
-          Local clipboard check interval (ms) [default: 200]
-  -p, --password <PASSWORD>
-          Encrypt clipboards using this password. Compile with the "force-secure"
-          feature enabled to make this mandatory
-  -v, --verbose...
-          Increase verbosity (defaults to INFO and above)
-  -h, --help
-          Print help
-  -V, --version
-          Print version
+  -i, --poll-interval <POLL_INTERVAL>  Frequency in ms with which to actually poll for
+                                       clipboard changes (see README) [default: 10000]
+  -p, --password <PASSWORD>            Encrypt clipboards using this password. Compile with
+                                       the "force-secure" feature enabled to make this
+                                       mandatory
+  -v, --verbose...                     Increase verbosity (defaults to INFO and above)
+  -h, --help                           Print help
+  -V, --version                        Print version
+
 ```
+
+\* `yclip` is cross-platform. 
+
+On Windows, we can subscribe to `WM_CLIPBOARDUPDATE` events which are triggered whenever the clipboard changes. Easy!
+
+On MacOS we can't sign up to be notified on clipboard changes. Instead, we have to poll the `changeCount` on `NSPasteBoard` and check if it's increased since last time. This means there's actually work to do to detect changes in a timely manner; I've set the default poll interval to be 200ms but if you find this is using up too many CPU cycles then you can reduce the frequency via the `YCLIP_MACOS_POLL_INTERVAL_MILLIS` environment variable.
+
+On X11 linux systems, the situation is similar to Windows; in this case we can subscribe to [XFIXES](https://www.x.org/releases/current/doc/fixesproto/fixesproto.txt) events, which are issued whenever someone reasserts ownership of the clipboard. Sadly this isn't a catch-all; the current clipboard owner can change its contents without telling the X server about it (although this is against the ICCCM rules!) and so we'd miss it. As a safety measure, `yclip` polls the clipboard every so often (10s by default, adjust with the `-i` flag) and sees if it's changed.
+
+On Wayland, uhhh... I have no idea how Wayland works.
 
 ## Installation
 

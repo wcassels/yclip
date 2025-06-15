@@ -31,8 +31,8 @@ async fn main() -> anyhow::Result<()> {
 #[derive(clap::Parser)]
 #[command(version)]
 struct Options {
-    /// Local clipboard check interval (ms)
-    #[arg(short, long, value_parser = duration_from_millis, default_value = "10000")]
+    /// Frequency in ms with which to actually poll for clipboard changes in (see README)
+    #[arg(short('i'), long, value_parser = duration_from_millis, default_value = "10000")]
     poll_interval: Duration,
     /// Connect to the yclip server running on this socket address
     #[arg(value_parser = parse_socket_addr)]
