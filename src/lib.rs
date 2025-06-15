@@ -1,3 +1,4 @@
+use clipboard::Board;
 pub use clipboard::Clipboard;
 pub use connection::Connection;
 use connection::ReadResult;
@@ -109,43 +110,35 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
     }
 }
 
-fn spawn_local_watcher<C: Clipboard>(notify: Arc<Notify>, refresh_rate: Duration) {
+fn spawn_local_watcher<B: Board>(notify: Arc<Notify>, refresh_rate: Duration) {
     tokio::task::spawn(async move {
-        if let Err(e) = watch_local::<C>(notify, refresh_rate).await {
+        if let Err(e) = watch_local::<B>(notify, refresh_rate).await {
             error!("Local watcher exited with an error: {e}");
         }
     });
 }
 
-pub async fn watch_local<C: Clipboard>(
+pub async fn watch_local<B: Board>(
     notify: Arc<Notify>,
     refresh_rate: Duration,
 ) -> anyhow::Result<()> {
-    let mut clipboard = C::new()?;
-    *CLIPBOARD.write().await = clipboard.get_text()?.map(ClipboardChange::Text);
-
+    *CLIPBOARD.write().await = B::new()?.get_text()?.map(ClipboardChange::Text);
+    let mut clipboard = Clipboard::<B>::new(refresh_rate)?;
     loop {
-        tokio::time::sleep(refresh_rate).await;
-        let Some(new_text) = clipboard.get_text()?.map(ClipboardChange::Text) else {
-            continue;
-        };
-
-        if CLIPBOARD.read().await.as_ref() != Some(&new_text) {
-            debug!("Local clipboard change: {new_text}");
-            *CLIPBOARD.write().await = Some(new_text);
-            notify.notify_waiters();
-        }
+        let change = clipboard.listen_for_change().await?;
+        *CLIPBOARD.write().await = Some(change);
+        notify.notify_waiters();
     }
 }
 
-pub async fn watch_remote<T: AsyncRead + AsyncWrite, C>(
+pub async fn watch_remote<T: AsyncRead + AsyncWrite, B: Board>(
     mut connection: Connection<T>,
     notify: Arc<Notify>,
 ) -> anyhow::Result<()>
 where
-    C: Clipboard,
+    B: Board,
 {
-    let mut clipboard = C::new()?;
+    let mut board = B::new()?;
     loop {
         trace!("{}: selecting...", connection.peer_addr());
         tokio::select! {
@@ -166,7 +159,7 @@ where
                         debug!("Received new clipboard: {change}");
                         match change {
                             ClipboardChange::Text(s) => {
-                                clipboard.set_text(s.as_str());
+                                board.set_text(s.as_str());
                                 *CLIPBOARD.write().await = Some(ClipboardChange::Text(s));
                             },
                             ClipboardChange::Image(_) => unimplemented!("Images unsupported for now"),

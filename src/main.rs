@@ -15,9 +15,9 @@ async fn main() -> anyhow::Result<()> {
     })?;
 
     let res = if let Some(addr) = opts.socket {
-        yclip::run_satellite(addr, opts.refresh_interval, opts.password).await
+        yclip::run_satellite(addr, opts.poll_interval, opts.password).await
     } else {
-        yclip::run_host(opts.refresh_interval, opts.password).await
+        yclip::run_host(opts.poll_interval, opts.password).await
     };
 
     if let Err(e) = res {
@@ -32,8 +32,8 @@ async fn main() -> anyhow::Result<()> {
 #[command(version)]
 struct Options {
     /// Local clipboard check interval (ms)
-    #[arg(short, long, value_parser = duration_from_millis, default_value = "200")]
-    refresh_interval: Duration,
+    #[arg(short, long, value_parser = duration_from_millis, default_value = "10000")]
+    poll_interval: Duration,
     /// Connect to the yclip server running on this socket address
     #[arg(value_parser = parse_socket_addr)]
     socket: Option<SocketAddr>,
