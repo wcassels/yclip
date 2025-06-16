@@ -1,6 +1,6 @@
+use objc2_app_kit::NSPasteboard;
 use std::sync::Arc;
 use std::time::Duration;
-use objc2_app_kit::NSPasteboard;
 use tokio::sync::Notify;
 
 pub struct Listener {
@@ -27,10 +27,7 @@ impl Listener {
     }
 }
 
-pub fn listen_clipboard(
-    notify: Arc<Notify>,
-    poll_interval: Duration,
-) -> anyhow::Result<()> {
+pub fn listen_clipboard(notify: Arc<Notify>, poll_interval: Duration) -> anyhow::Result<()> {
     unsafe {
         let board = NSPasteboard::generalPasteboard();
         let mut count = board.changeCount();

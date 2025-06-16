@@ -134,10 +134,7 @@ pub async fn watch_remote<T: AsyncRead + AsyncWrite, B: Board>(
     mut connection: Connection<T>,
     mut board: B,
     notify: Arc<Notify>,
-) -> anyhow::Result<()>
-where
-    B: Board,
-{
+) -> anyhow::Result<()> {
     let peer_addr = &connection.peer_addr().to_string();
     loop {
         trace!("{}: selecting...", peer_addr);
