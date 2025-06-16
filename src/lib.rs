@@ -138,18 +138,19 @@ pub async fn watch_remote<T: AsyncRead + AsyncWrite, B: Board>(
 where
     B: Board,
 {
+    let peer_addr = &connection.peer_addr().to_string();
     loop {
-        trace!("{}: selecting...", connection.peer_addr());
+        trace!("{}: selecting...", peer_addr);
         tokio::select! {
             _notified = notify.notified() => {
                 trace!("Notified of clipboard change");
                 // Someone has updated the clipboard. Send it to our client.
                 let lock = clipboard::LATEST_CHANGE.read().await;
-                let new_clip = lock.as_ref().expect("logic bug: we were notified but the clipboard was empty");
+                let change = lock.as_ref().expect("logic bug: we were notified but the clipboard was empty");
+
                 // We're holding a read lock while we write the bytes into
                 // the buffer (just so we can log them afterwards!)
-                connection.send(new_clip).await?;
-                debug!("Sent {new_clip} to {}", connection.peer_addr());
+                connection.send(change, peer_addr).await?;
                 drop(lock);
             },
             result = connection.read() => {

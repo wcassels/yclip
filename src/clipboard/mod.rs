@@ -45,6 +45,10 @@ impl ClipboardChange {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn kind(&self) -> ClipboardKind {
         match self {
             ClipboardChange::Text(_) => ClipboardKind::Text,
@@ -52,15 +56,15 @@ impl ClipboardChange {
         }
     }
 
-    pub fn write_all(&self, mut writer: impl io::Write) -> anyhow::Result<()> {
+    pub fn write_all(&self, mut writer: impl io::Write) -> io::Result<()> {
         match self {
             ClipboardChange::Text(x) => {
                 writer.write_all(x.as_bytes())?;
             }
             ClipboardChange::Image(x) => {
                 writer.write_all(x.bytes.as_ref())?;
-                writer.write_all(u64::try_from(x.width)?.to_le_bytes().as_slice())?;
-                writer.write_all(u64::try_from(x.height)?.to_le_bytes().as_slice())?;
+                writer.write_all(u64::try_from(x.width).unwrap().to_le_bytes().as_slice())?;
+                writer.write_all(u64::try_from(x.height).unwrap().to_le_bytes().as_slice())?;
             }
         }
         Ok(())

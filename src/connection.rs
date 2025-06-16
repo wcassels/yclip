@@ -1,5 +1,4 @@
 use crate::{secure::Noise, ClipboardChange};
-use anyhow::Context;
 use arboard::ImageData;
 use std::fmt::Display;
 use tokio::io::{
@@ -41,29 +40,47 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         }
     }
 
-    pub async fn send(&mut self, update: &ClipboardChange) -> anyhow::Result<()> {
+    pub async fn send(
+        &mut self,
+        update: &ClipboardChange,
+        peer: impl Display,
+    ) -> anyhow::Result<(), SendError> {
+        match self.send_inner(update).await {
+            Ok(()) => {
+                debug!("Sent {update} to {peer}");
+                Ok(())
+            }
+            Err(e) if e.recoverable() => {
+                error!("Failed to send {update} to {peer}: {e}");
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn send_inner(&mut self, update: &ClipboardChange) -> Result<(), SendError> {
+        if update.is_empty() {
+            return Err(SendError::ClipboardEmpty);
+        }
+
         self.compressed.clear();
         let compress = update.len() > MIN_COMPRESSION_LEN;
 
         if compress {
             let mut encoder = zstd::Encoder::new(&mut self.compressed, 0)?;
-            update.write_all(&mut encoder)?;
+            update.write_all(&mut encoder).map_err(SendError::Zstd)?;
             encoder.finish()?;
         } else {
             update.write_all(&mut self.compressed)?;
         }
 
-        anyhow::ensure!(
-            !self.compressed.is_empty(),
-            "Logic bug! Shouldn't be trying to send an empty clipboard"
-        );
-
         let n_chunks = 1 + self.compressed.len() / CHUNK_SIZE;
-        anyhow::ensure!(
-            n_chunks < MAX_CHUNKS,
-            "Refusing to send oversized clipboard contents ({}MB post-compression - the limit is 63MB)",
-            self.compressed.len() / (1024 * 1024)
-        );
+        if n_chunks > MAX_CHUNKS {
+            return Err(SendError::ClipboardTooBig {
+                bytes: self.compressed.len(),
+            });
+        }
+
         let n_chunks = u16::try_from(n_chunks).unwrap();
 
         // kind | compress | n_chunks | (idx | len | data) repeat
@@ -112,7 +129,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                     bytes: std::borrow::Cow::Owned(bytes),
                 })))
             }
-            Err(Error::Eof) => Ok(None),
+            Err(ReadError::Eof) => Ok(None),
             // It feels like it would be nice to recover from some of these. But is that
             // worth the effort? (I don't think so)
             Err(e) => anyhow::bail!("Failed to read incoming message: {e}"),
@@ -122,7 +139,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     // Have to be quite a bit more careful to make this cancel-safe
     // (basically have to chain cancel-safe futures, and persist
     // all state in case any of them are cancelled)
-    async fn read_inner(&mut self) -> Result<(Vec<u8>, Metadata), Error> {
+    async fn read_inner(&mut self) -> Result<(Vec<u8>, Metadata), ReadError> {
         let meta = match &mut self.current_meta {
             Some(m) => m,
             None => {
@@ -130,7 +147,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 match self.reader.read_exact(&mut meta.meta_bytes).await {
                     Ok(_) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        return Err(Error::Eof)
+                        return Err(ReadError::Eof)
                     }
                     Err(e) => return Err(e.into()),
                 }
@@ -171,7 +188,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
 
             if !compress {
                 if n_chunks != 1 {
-                    return Err(Error::Adhoc(anyhow::anyhow!(
+                    return Err(ReadError::Adhoc(anyhow::anyhow!(
                         "Saw a message >63KB that wasn't compressed!"
                     )));
                 }
@@ -186,7 +203,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 // Done!
                 let mut decompressed = Vec::new();
                 zstd::stream::copy_decode(self.finished.as_slice(), &mut decompressed)
-                    .context("Decompression failure")?;
+                    .map_err(ReadError::Zstd)?;
                 self.finished.clear();
                 let meta = self.current_meta.take().unwrap();
                 return Ok((decompressed, meta));
@@ -203,13 +220,46 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum SendError {
+    #[error("IO error {0}")]
+    Io(#[from] std::io::Error),
+    #[error("encode error {0}")]
+    Noise(#[from] snow::Error),
+    #[error("compression error {0}")]
+    Zstd(std::io::Error),
+    #[error("shouldn't be trying to send an empty clipboard")]
+    ClipboardEmpty,
+    #[error(
+        "clipboard too big ({}MB post-compression - the limit is 63MB)",
+        bytes / (1024 * 1024)
+    )]
+    ClipboardTooBig { bytes: usize },
+}
+
+impl SendError {
+    fn recoverable(&self) -> bool {
+        match self {
+            Self::ClipboardEmpty => true,
+            Self::ClipboardTooBig { .. } => true,
+            Self::Zstd(_) => true,
+            // If we return either of the below, there's a chance we've already
+            // written an incomplete message to the socket.
+            Self::Io(_) => false,
+            Self::Noise(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
     #[error("IO error {0}")]
     Io(#[from] std::io::Error),
     #[error("EOF")]
     Eof,
     #[error("decode error {0}")]
     Noise(#[from] snow::Error),
+    #[error("decompression error {0}")]
+    Zstd(std::io::Error),
     #[error("clipboard wasn't utf8")]
     NonUt8(#[from] std::string::FromUtf8Error),
     #[error("logic error {0}")]

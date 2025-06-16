@@ -81,12 +81,12 @@ impl Noise {
         })
     }
 
-    pub fn encode_message(&mut self, msg: &[u8]) -> anyhow::Result<&[u8]> {
+    pub fn encode_message(&mut self, msg: &[u8]) -> Result<&[u8], snow::Error> {
         let len = self.transport.write_message(msg, &mut self.buf)?;
         Ok(&self.buf[..len])
     }
 
-    pub fn decode_message(&mut self, msg: &[u8]) -> anyhow::Result<&[u8]> {
+    pub fn decode_message(&mut self, msg: &[u8]) -> Result<&[u8], snow::Error> {
         let len = self.transport.read_message(msg, &mut self.buf)?;
         Ok(&self.buf[..len])
     }
