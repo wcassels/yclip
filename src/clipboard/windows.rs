@@ -6,8 +6,8 @@ use tokio::sync::Notify;
 use tracing::*;
 use winapi::shared::minwindef::LPVOID;
 use winapi::um::winuser::{
-    AddClipboardFormatListener, CreateWindowExW, GetMessageW, RemoveClipboardFormatListener,
-    CW_USEDEFAULT, MSG, WM_CLIPBOARDUPDATE, WS_OVERLAPPEDWINDOW,
+    AddClipboardFormatListener, CreateWindowExW, GetMessageW, CW_USEDEFAULT, MSG,
+    WM_CLIPBOARDUPDATE, WS_OVERLAPPEDWINDOW,
 };
 
 pub struct Listener {
@@ -60,15 +60,5 @@ fn listen_clipboard(notify: Arc<Notify>) -> anyhow::Result<()> {
                 notify.notify_one();
             }
         }
-        // while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
-        //     if msg.message == WM_CLIPBOARDUPDATE {
-        //         notify.notify_one();
-        //     }
-        //     // winapi::um::winuser::TranslateMessage(&msg);
-        //     // winapi::um::winuser::DispatchMessageW(&msg);
-        // }
-
-        // RemoveClipboardFormatListener(hwnd);
     }
-    // Ok(())
 }
