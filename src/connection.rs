@@ -90,11 +90,11 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         Ok(())
     }
 
-    pub async fn read(&mut self) -> anyhow::Result<ReadResult> {
+    pub async fn read(&mut self) -> anyhow::Result<Option<ClipboardChange>> {
         match self.read_inner().await {
-            Ok((bytes, meta)) if meta.is_text() => Ok(ReadResult::Done(ClipboardChange::Text(
-                String::from_utf8(bytes)?,
-            ))),
+            Ok((bytes, meta)) if meta.is_text() => {
+                Ok(Some(ClipboardChange::Text(String::from_utf8(bytes)?)))
+            }
             Ok((mut bytes, _meta)) => {
                 let len = bytes.len();
                 anyhow::ensure!(
@@ -106,13 +106,13 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 let width = usize::try_from(u64::from_le_bytes(width_bytes))?;
                 let height = usize::try_from(u64::from_le_bytes(height_bytes))?;
                 bytes.truncate(len - 2 * 8);
-                Ok(ReadResult::Done(ClipboardChange::Image(ImageData {
+                Ok(Some(ClipboardChange::Image(ImageData {
                     width,
                     height,
                     bytes: std::borrow::Cow::Owned(bytes),
                 })))
             }
-            Err(Error::Eof) => Ok(ReadResult::Eof),
+            Err(Error::Eof) => Ok(None),
             // It feels like it would be nice to recover from some of these. But is that
             // worth the effort? (I don't think so)
             Err(e) => anyhow::bail!("Failed to read incoming message: {e}"),
@@ -214,13 +214,6 @@ enum Error {
     NonUt8(#[from] std::string::FromUtf8Error),
     #[error("logic error {0}")]
     Adhoc(#[from] anyhow::Error),
-}
-
-#[derive(Debug)]
-pub enum ReadResult {
-    Eof,
-    Incomplete,
-    Done(ClipboardChange),
 }
 
 #[derive(Clone, Copy, Default)]

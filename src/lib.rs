@@ -2,7 +2,6 @@ use arboard::ImageData;
 pub use clipboard::Clipboard;
 use clipboard::{Board, ClipboardChange};
 pub use connection::Connection;
-use connection::ReadResult;
 pub use secure::{Noise, Secret};
 use std::{
     fmt::Display,
@@ -154,30 +153,27 @@ where
                 drop(lock);
             },
             result = connection.read() => {
-                match result? {
-                    ReadResult::Done(change) => {
-                        debug!("Received new clipboard: {change}");
-                        clipboard::store_hash(Some(&change)).await;
-                        match change {
-                            ClipboardChange::Text(s) => {
-                                board.set_text(s.as_str());
-                            },
-                            ClipboardChange::Image(x) => {
-                                board.set_image(ImageData {
-                                    height: x.height,
-                                    width: x.width,
-                                    // Might as well avoid copying this
-                                    bytes: std::borrow::Cow::Borrowed(x.bytes.as_ref()),
-                                });
-                            },
-                        }
-
-                        // We're not a waiter, so we won't get woken up by our own update later
-                        notify.notify_waiters();
-                    }
-                    ReadResult::Incomplete => continue,
-                    ReadResult::Eof => return Ok(()),
+                let Some(change) = result? else {
+                    return Ok(());
+                };
+                debug!("Received new clipboard: {change}");
+                clipboard::store_hash(Some(&change)).await;
+                match change {
+                    ClipboardChange::Text(s) => {
+                        board.set_text(s.as_str());
+                    },
+                    ClipboardChange::Image(x) => {
+                        board.set_image(ImageData {
+                            height: x.height,
+                            width: x.width,
+                            // Might as well avoid copying this
+                            bytes: std::borrow::Cow::Borrowed(x.bytes.as_ref()),
+                        });
+                    },
                 }
+
+                // We're not a waiter, so we won't get woken up by our own update later
+                notify.notify_waiters();
             },
         }
     }
