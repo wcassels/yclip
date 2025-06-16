@@ -67,10 +67,12 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         let compress = update.len() > MIN_COMPRESSION_LEN;
 
         if compress {
-            let mut encoder =
-                zstd::Encoder::new(&mut self.compressed, 0).map_err(SendError::Zstd)?;
-            update.write_all(&mut encoder).map_err(SendError::Zstd)?;
-            encoder.finish()?;
+            zstd::Encoder::new(&mut self.compressed, 0)
+                .and_then(|mut encoder| {
+                    update.write_all(&mut encoder)?;
+                    encoder.finish()
+                })
+                .map_err(SendError::Zstd)?;
         } else {
             update.write_all(&mut self.compressed)?;
         }
