@@ -77,12 +77,12 @@ pub fn test(input: &[String], password: &str) {
     RUNTIME.block_on(async {
         let (conn_a, conn_b) = dummy_connections(password).await;
         let handle_a = tokio::task::spawn(async {
-            crate::watch_remote::<_, ClipboardA>(conn_a, Arc::clone(&*NOTIFY_A))
+            crate::watch_remote(conn_a, ClipboardA::new().unwrap(), Arc::clone(&*NOTIFY_A))
                 .await
                 .unwrap();
         });
         let handle_b = tokio::task::spawn(async {
-            crate::watch_remote::<_, ClipboardB>(conn_b, Arc::clone(&*NOTIFY_B))
+            crate::watch_remote(conn_b, ClipboardB::new().unwrap(), Arc::clone(&*NOTIFY_B))
                 .await
                 .unwrap();
         });
@@ -142,8 +142,8 @@ async fn dummy_connections(password: &str) -> (Connection<DuplexStream>, Connect
         Noise::host(&mut stream_a, "b", &secret),
         Noise::satellite(&mut stream_b, password),
     };
-    let host = host.unwrap().unwrap();
-    let client = client.unwrap().unwrap();
+    let host = host.unwrap();
+    let client = client.unwrap();
     let connection_a = Connection::new(stream_a, "b", host);
     let connection_b = Connection::new(stream_b, "a", client);
     (connection_a, connection_b)

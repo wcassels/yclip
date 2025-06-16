@@ -1,3 +1,4 @@
+use crate::IntoAnyhow;
 use arboard::ImageData;
 use enum_map::{Enum, EnumMap};
 use rustc_hash::FxHasher;
@@ -110,32 +111,47 @@ pub enum ClipboardKind {
 
 pub struct Clipboard<B> {
     board: B,
-    listener: Listener,
+    listener: Option<Listener>,
     poll_interval: Duration,
 }
 
 impl<B: Board> Clipboard<B> {
     pub fn new(poll_interval: Duration) -> anyhow::Result<Self> {
         let board = B::new()?;
-        let listener = Listener::new()?;
+        let listener = Listener::new();
+
+        if let Err(e) = listener.as_ref() {
+            error!("\
+Failed to start clipboard listener: {e}. This might not be a surprise to you (non-X11 linux?) but if it is, please raise a bug report! \
+In the meantime, you're stuck witih polling.");
+        }
 
         Ok(Self {
             board,
-            listener,
+            listener: listener.ok(),
             poll_interval,
         })
     }
 
     pub async fn listen_for_change(&mut self) -> anyhow::Result<ClipboardChange> {
         loop {
-            let from_polling =
-                match tokio::time::timeout(self.poll_interval, self.listener.change()).await {
-                    Err(_) => true,
-                    Ok(x) => {
-                        x?;
-                        false
+            let from_polling = match self.listener.as_ref() {
+                Some(listener) => {
+                    let res = tokio::time::timeout(self.poll_interval, listener.change()).await;
+                    match res {
+                        Ok(Ok(())) => false,
+                        Ok(Err(e)) => {
+                            error!("Failed to listen for clipboard updates: {e}");
+                            continue;
+                        }
+                        Err(_elapsed) => true,
                     }
-                };
+                }
+                None => {
+                    tokio::time::sleep(self.poll_interval).await;
+                    false
+                }
+            };
 
             let hashes = *CLIPBOARD_HASHES.read().await;
             let text = self
@@ -181,7 +197,7 @@ pub trait Board: Sized + Send {
 
 impl Board for arboard::Clipboard {
     fn new() -> anyhow::Result<Self> {
-        Ok(arboard::Clipboard::new()?)
+        arboard::Clipboard::new().into_anyhow("Failed to instantiate clipboard")
     }
     fn set_text(&mut self, text: &str) {
         if let Err(e) = self.set_text(text) {

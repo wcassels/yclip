@@ -23,7 +23,7 @@ impl Listener {
         // Initialize the XFixes extension
         let xfixes_query = x_conn.xfixes_query_version(5, 0)?.reply()?;
         trace!(
-            "XFixes version: {}.{}",
+            "XFIXES version: {}.{}",
             xfixes_query.major_version,
             xfixes_query.minor_version
         );

@@ -112,10 +112,10 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                     bytes: std::borrow::Cow::Owned(bytes),
                 })))
             }
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                Ok(ReadResult::Eof)
-            }
-            Err(e) => Err(e.into()),
+            Err(Error::Eof) => Ok(ReadResult::Eof),
+            // It feels like it would be nice to recover from some of these. But is that
+            // worth the effort? (I don't think so)
+            Err(e) => anyhow::bail!("Failed to read incoming message: {e}"),
         }
     }
 
@@ -127,7 +127,13 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             Some(m) => m,
             None => {
                 let mut meta = Metadata::default();
-                self.reader.read_exact(&mut meta.meta_bytes).await?;
+                match self.reader.read_exact(&mut meta.meta_bytes).await {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        return Err(Error::Eof)
+                    }
+                    Err(e) => return Err(e.into()),
+                }
                 debug!(
                     "New incoming message: is_text={}, compress={}, n_chunks={}",
                     meta.is_text(),
@@ -198,13 +204,15 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
-    #[error("IO error: {0}")]
+    #[error("IO error {0}")]
     Io(#[from] std::io::Error),
-    #[error("Decode error: {0}")]
+    #[error("EOF")]
+    Eof,
+    #[error("decode error {0}")]
     Noise(#[from] snow::Error),
-    #[error("Clipboard wasn't utf8: {0:?}")]
+    #[error("clipboard wasn't utf8")]
     NonUt8(#[from] std::string::FromUtf8Error),
-    #[error("Logic error: {0}")]
+    #[error("logic error {0}")]
     Adhoc(#[from] anyhow::Error),
 }
 

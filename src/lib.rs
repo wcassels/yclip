@@ -5,6 +5,7 @@ pub use connection::Connection;
 use connection::ReadResult;
 pub use secure::{Noise, Secret};
 use std::{
+    fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -25,25 +26,32 @@ mod secure;
 pub mod test;
 
 const UNSPECIFIED: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn run_satellite(
     addr: SocketAddr,
     refresh_interval: Duration,
     password: Option<String>,
 ) -> anyhow::Result<()> {
-    let mut stream = TcpStream::connect(&addr).await?;
-    stream.set_nodelay(true)?;
+    let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)).await {
+        Ok(s) => s
+            .and_then(|x| {
+                x.set_nodelay(true)?;
+                Ok(x)
+            })
+            .into_anyhow(format_args!("Failed to connect to {addr}"))?,
+        Err(_elapsed) => anyhow::bail!("Timed out connecting to {addr}"),
+    };
 
     let password = password.unwrap_or_default();
-    let Some(noise) = secure::Noise::satellite(&mut stream, password.as_str()).await? else {
-        return Ok(());
-    };
+    let noise = secure::Noise::satellite(&mut stream, password.as_str()).await?;
     info!("Connected to clipboard on {addr}");
     let connection = Connection::new(stream, addr.to_string(), noise);
 
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
-    watch_remote::<_, arboard::Clipboard>(connection, notify).await?; // Blocks
+    let board = <arboard::Clipboard as Board>::new()?;
+    watch_remote(connection, board, notify).await?; // Blocks
     info!("Host disconnected");
 
     Ok(())
@@ -74,17 +82,21 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
     loop {
         let (mut stream, peer_addr) = listener.accept().await?;
         stream.set_nodelay(true)?;
-        let Some(noise) = Noise::host(&mut stream, &peer_addr, &secret).await? else {
-            let _ = stream.shutdown().await;
-            continue;
+        let noise = match Noise::host(&mut stream, &peer_addr, &secret).await {
+            Ok(n) => n,
+            Err(e) => {
+                error!("{e}");
+                let _ = stream.shutdown().await;
+                continue;
+            }
         };
 
         info!("New client {peer_addr} connected");
         let connection = Connection::new(stream, peer_addr.to_string(), noise);
         let notify = Arc::clone(&notify);
-
+        let board = <arboard::Clipboard as Board>::new()?;
         tokio::task::spawn(async move {
-            match watch_remote::<_, arboard::Clipboard>(connection, notify).await {
+            match watch_remote(connection, board, notify).await {
                 Ok(()) => info!("Client {peer_addr} disconnected"),
                 Err(e) => error!("Remote watcher exited with an error: {e}"),
             }
@@ -121,12 +133,12 @@ pub async fn watch_local<B: Board>(
 
 pub async fn watch_remote<T: AsyncRead + AsyncWrite, B: Board>(
     mut connection: Connection<T>,
+    mut board: B,
     notify: Arc<Notify>,
 ) -> anyhow::Result<()>
 where
     B: Board,
 {
-    let mut board = B::new()?;
     loop {
         trace!("{}: selecting...", connection.peer_addr());
         tokio::select! {
@@ -134,7 +146,7 @@ where
                 trace!("Notified of clipboard change");
                 // Someone has updated the clipboard. Send it to our client.
                 let lock = clipboard::LATEST_CHANGE.read().await;
-                let new_clip = lock.as_ref().ok_or_else(|| anyhow::anyhow!("logic bug: we were notified but the clipboard was empty"))?;
+                let new_clip = lock.as_ref().expect("logic bug: we were notified but the clipboard was empty");
                 // We're holding a read lock while we write the bytes into
                 // the buffer (just so we can log them afterwards!)
                 connection.send(new_clip).await?;
@@ -182,4 +194,17 @@ pub fn init_logging(level: Level) -> anyhow::Result<()> {
     let subscriber = subscriber.with(layer);
     subscriber.init();
     Ok(())
+}
+
+pub trait IntoAnyhow<T> {
+    fn into_anyhow(self, prefix: impl Display) -> anyhow::Result<T>;
+}
+
+impl<T, E: std::error::Error> IntoAnyhow<T> for Result<T, E> {
+    fn into_anyhow(self, prefix: impl Display) -> anyhow::Result<T> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => Err(anyhow::anyhow!("{prefix}: {e}")),
+        }
+    }
 }
