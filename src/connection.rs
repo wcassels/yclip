@@ -1,4 +1,4 @@
-use crate::{secure::Noise, ClipboardChange};
+use crate::{secure::Noise, ClipboardChange, IntoAnyhow};
 use arboard::ImageData;
 use std::fmt::Display;
 use tokio::io::{
@@ -44,7 +44,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         &mut self,
         update: &ClipboardChange,
         peer: impl Display,
-    ) -> anyhow::Result<(), SendError> {
+    ) -> anyhow::Result<()> {
         match self.send_inner(update).await {
             Ok(()) => {
                 debug!("Sent {update} to {peer}");
@@ -54,7 +54,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 error!("Failed to send {update} to {peer}: {e}");
                 Ok(())
             }
-            Err(e) => Err(e.into()),
+            x @ Err(_) => x.into_anyhow(format_args!("failed to send {update} to {peer}")),
         }
     }
 
@@ -132,7 +132,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
             Err(ReadError::Eof) => Ok(None),
             // It feels like it would be nice to recover from some of these. But is that
             // worth the effort? (I don't think so)
-            Err(e) => anyhow::bail!("Failed to read incoming message: {e}"),
+            Err(e) => anyhow::bail!("failed to read incoming message: {e}"),
         }
     }
 
