@@ -2,7 +2,7 @@
 
 libfuzzer_sys::fuzz_target!(
     init: {
-        yclip::init_logging(yclip::tracing::Level::INFO).unwrap();
+        // yclip::init_logging(yclip::tracing::Level::INFO).unwrap();
         yclip::test::test_setup();
     },
     |input: (String, String)| {
