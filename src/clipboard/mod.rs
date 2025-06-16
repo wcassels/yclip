@@ -121,7 +121,7 @@ impl<B: Board> Clipboard<B> {
         let listener = Listener::new();
 
         if let Err(e) = listener.as_ref() {
-            error!("\
+            warn!("\
 Failed to start clipboard listener: {e}. This might not be a surprise to you (non-X11 linux?) but if it is, please raise a bug report! \
 In the meantime, you're stuck witih polling.");
         }
