@@ -1,8 +1,8 @@
 use arboard::ImageData;
-pub use clipboard::Clipboard;
+use clipboard::Clipboard;
 use clipboard::{Board, ClipboardChange};
-pub use connection::Connection;
-pub use secure::{Noise, Secret};
+use connection::Connection;
+use secure::{Noise, Secret};
 use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -14,7 +14,7 @@ use tokio::{
     net::{TcpStream, UdpSocket},
     sync::Notify,
 };
-pub use tracing;
+use tracing;
 use tracing::*;
 
 mod clipboard;
