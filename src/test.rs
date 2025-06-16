@@ -1,6 +1,5 @@
 use crate::{clipboard::Board, Connection, Noise, Secret};
 use arboard::ImageData;
-use rand::distr::{SampleString, Uniform};
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -151,6 +150,8 @@ async fn dummy_connections(password: &str) -> (Connection<DuplexStream>, Connect
 
 #[test]
 fn test_chunking() {
+    use rand::distr::{SampleString, Uniform};
+
     crate::init_logging(Level::TRACE).unwrap();
     let mut rng = rand::rng();
     let uniform = Uniform::<char>::new('\u{0020}', '\u{10FFFF}').unwrap();
