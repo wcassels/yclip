@@ -1,4 +1,4 @@
-# yclip
+<h1 align="center">yclip</h1>
 
 `yclip` implements a client-server model for sharing clipboard content. Invoke `yclip` to start a server locally; it will log a command in the form `yclip <host>:<port>` that you can run from elsewhere on the network to connect. Once connected, text/images copied on one machine will be instantly* pastable on the other!
 
