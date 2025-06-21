@@ -25,15 +25,15 @@ Options:
 
 On Windows, we can subscribe to `WM_CLIPBOARDUPDATE` events which are triggered whenever the clipboard changes. Easy!
 
-On MacOS we can't sign up to be notified on clipboard changes. Instead, we have to poll the `changeCount` on `NSPasteBoard` and check if it's increased since last time. This means there's actually work to do to detect changes in a timely manner; I've set the default poll interval to be 200ms but if you find this is using up too many CPU cycles then you can reduce the frequency via the `YCLIP_MACOS_POLL_INTERVAL_MILLIS` environment variable.
+On MacOS we can't sign up to be notified on clipboard changes. Instead, we have to poll the `changeCount` on `NSPasteBoard` and check if it's increased since last time. This means there's actually work to do to detect changes; I've set the default poll interval to be 200ms but if you find this is using up too many CPU cycles then you can reduce the frequency via the `YCLIP_MACOS_POLL_INTERVAL_MILLIS` environment variable.
 
-On X11 linux systems, the situation is similar to Windows; in this case we can subscribe to the relevant [XFIXES](https://www.x.org/releases/current/doc/fixesproto/fixesproto.txt) event, which is issued whenever someone asserts ownership of the clipboard. Sadly this isn't a catch-all; the current clipboard owner can change its contents without telling the X server about it (although this is against the ICCCM rules!) and so we'd miss it. As a safety measure, `yclip` polls the clipboard every so often (10s by default, adjust with the `-i` flag) and sees if it's changed.
+On X11 linux systems, the situation is similar to Windows; in this case we can subscribe to the relevant [XFIXES](https://www.x.org/releases/current/doc/fixesproto/fixesproto.txt) events, which are issued whenever someone asserts ownership of the clipboard. Sadly this isn't a catch-all; the current clipboard owner can change its contents without telling the X server about it (although this is against the ICCCM rules!) and so we'd miss it. As a safety measure, `yclip` polls the clipboard every so often (10s by default, adjust with the `-i` flag) and sees if it's changed.
 
 On Wayland, uhhh... I have no idea how Wayland works.
 
 ## Installation
 
-You can build `yclip` from source using cargo. Either install it with `cargo install yclip --git <this url>`, or checkout this repo and run  `cargo build --release` - you'll find the binary in `target/release/`. If you want to make password-encryption mandatory, append `--features force-secure` to either command.
+Install using `cargo` with `cargo install yclip`. If you want to make password-encryption mandatory, specify `--features force-secure`.
 
 ## Encryption
 
