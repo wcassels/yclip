@@ -10,7 +10,7 @@ repository = "https://github.com/wcassels/yclip"
 
 [dependencies]
 anyhow = "1.0.98"
-arboard = { git = "https://github.com/wcassels/arboard.git", rev = "e0d1e6d3e9356d2791a8fa37131db880f1b74f72", version = "3.5.0" }
+arboard = { git = "https://github.com/wcassels/arboard.git", rev = "18fd71e27301715f8d701da4053cdae147ab928d" }
 argon2 = "0.5.3"
 clap = { version = "4.5.37", features = ["derive"] }
 enum-map = "2.7.3"
