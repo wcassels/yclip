@@ -18,7 +18,6 @@ Options:
   -v, --verbose...                     Increase verbosity (defaults to INFO and above)
   -h, --help                           Print help
   -V, --version                        Print version
-
 ```
 
 \* `yclip` is cross-platform. 
