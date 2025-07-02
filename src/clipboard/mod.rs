@@ -89,7 +89,7 @@ impl fmt::Display for ClipboardChange {
         match self {
             Self::Text(s) if s.len() < 100 => write!(f, "Text: {s}"),
             Self::Text(s) => write!(f, "Text (omitted, {} bytes long)", s.len()),
-            Self::Image(s) => write!(f, "{}x{} image", s.width, s.height), // TODO this is almost certainly not what we want
+            Self::Image(s) => write!(f, "{}x{} image", s.width, s.height),
         }
     }
 }
