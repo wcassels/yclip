@@ -133,6 +133,8 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
                 })))
             }
             Err(ReadError::Eof) => Ok(None),
+            // Windows seems to just aggressively drop the TCP connection, so we get this. Don't log an error
+            Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionReset => Ok(None),
             // It feels like it would be nice to recover from some of these. But is that
             // worth the effort? (I don't think so)
             Err(e) => anyhow::bail!("failed to read incoming message: {e}"),
