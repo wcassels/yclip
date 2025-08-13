@@ -9,6 +9,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::net::TcpListener;
+use tokio::time::error::Elapsed;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt as _},
     net::{TcpStream, UdpSocket},
@@ -32,7 +34,7 @@ pub async fn run_satellite(
     refresh_interval: Duration,
     password: Option<String>,
 ) -> anyhow::Result<()> {
-    let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)).await {
+    let stream = match connect(addr).await {
         Ok(s) => s
             .and_then(|x| {
                 x.set_nodelay(true)?;
@@ -42,6 +44,15 @@ pub async fn run_satellite(
         Err(_elapsed) => anyhow::bail!("Timed out connecting to {addr}"),
     };
 
+    satellite_inner(stream, addr, refresh_interval, password).await
+}
+
+pub async fn satellite_inner(
+    mut stream: TcpStream,
+    addr: SocketAddr,
+    refresh_interval: Duration,
+    password: Option<String>,
+) -> anyhow::Result<()> {
     let password = password.unwrap_or_default();
     let noise = secure::Noise::satellite(&mut stream, password.as_str()).await?;
     info!("Connected to clipboard on {addr}");
@@ -56,7 +67,11 @@ pub async fn run_satellite(
     Ok(())
 }
 
-pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> anyhow::Result<()> {
+pub async fn connect(addr: SocketAddr) -> Result<std::io::Result<TcpStream>, Elapsed> {
+    tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)).await
+}
+
+pub async fn bind_listener() -> std::io::Result<(TcpListener, SocketAddr)> {
     let listener = tokio::net::TcpListener::bind(UNSPECIFIED).await?;
 
     let local_addr = {
@@ -65,7 +80,13 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
         socket.local_addr()?.ip()
     };
 
-    info!(
+    let addr = SocketAddr::new(local_addr, listener.local_addr()?.port());
+    Ok((listener, addr))
+}
+
+pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> anyhow::Result<()> {
+    let (listener, local_addr) = bind_listener().await?;
+    tracing::info!(
         "Run `yclip {local_addr}:{}{}` to connect to this clipboard",
         listener.local_addr()?.port(),
         password
@@ -74,6 +95,14 @@ pub async fn run_host(refresh_interval: Duration, password: Option<String>) -> a
             .unwrap_or_default()
     );
 
+    host_inner(listener, password, refresh_interval).await
+}
+
+pub async fn host_inner(
+    listener: TcpListener,
+    password: Option<String>,
+    refresh_interval: Duration,
+) -> anyhow::Result<()> {
     let notify = Arc::new(Notify::const_new());
     spawn_local_watcher::<arboard::Clipboard>(Arc::clone(&notify), refresh_interval);
     let secret = Secret::new(password.unwrap_or_default().as_str(), None);
