@@ -1,7 +1,7 @@
 [package]
 name = "yclip"
 description = "A cross-platform clipboard syncer"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 authors = ["Will Cassels <wcassels@protonmail.com>"]
 license = "Unlicense"
@@ -10,7 +10,7 @@ repository = "https://github.com/wcassels/yclip"
 
 [dependencies]
 anyhow = "1.0.98"
-arboard = { git = "https://github.com/wcassels/arboard.git", rev = "70c85449840c7ea7378fb5286be81663dd4ba95b" }
+arboard = "3.6.1"
 argon2 = "0.5.3"
 clap = { version = "4.5.37", features = ["derive"] }
 enum-map = "2.7.3"
